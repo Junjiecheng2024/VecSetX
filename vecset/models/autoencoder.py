@@ -113,12 +113,12 @@ class VecSetAutoEncoder(nn.Module):
         
         return self.to_outputs(latents)
 
-    def forward(self, pc, queries):
+    def forward(self, pc, queries, block_size=100000):
         bottleneck = self.encode(pc)
         x = self.learn(bottleneck['x'])
 
-        if queries.shape[1] > 100000:
-            N = 100000
+        if queries.shape[1] > block_size:
+            N = block_size
             os = []
             for block_idx in range(math.ceil(queries.shape[1] / N)):
                 o = self.decode(x, queries[:, block_idx*N:(block_idx+1)*N, :]).squeeze(-1)

@@ -83,7 +83,13 @@ distances = np.linalg.norm(surface, axis=1)
 scale = 1 / np.max(distances)
 surface *= scale
 ````
-I will release a full inference script. 
+<!-- I will release a full inference script.  -->
+
+Here is the inference script,
+```
+python infer.py --input input_point_cloud.ply --output output_mesh.obj
+```
+The available model definitions can be found in `autoencoder.py`. Note that the script assumes the input file is a point cloud instead of a mesh file.
 
 ## :bookmark_tabs: Other minor adjustments
 - Removed layernorm on KV suggested by Youkang Kong
