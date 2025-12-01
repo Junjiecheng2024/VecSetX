@@ -12,3 +12,7 @@ output/
 vecset/README
 eval.py
 extensions
+*.log
+*.pdf
+*.npz
+*.nii.gz

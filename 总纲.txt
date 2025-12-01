@@ -1,0 +1,94 @@
+行动计划（Action Plan）
+
+阶段 1：基础模型训练（多类重建）
+目标：让模型先学会从完整的 10 类结构中进行隐式表征与重建。
+步骤：
+
+将每个病例的 10 类 segmentation mask 转换为适用于 VecSetX 的输入格式（点云表示，并附带 one-hot 类别编码）。
+
+训练 VecSetX 的多类 autoencoder，使模型实现“输入 10 类结构，输出 10 类结构”的完整重建。
+
+验证模型是否能够稳定地重建全心结构，确保 latent set 与 decoder 学习到了足够的心脏形状表达能力。
+输出：一个能够稳定处理 10 类全心结构的 Encoder + Decoder（隐式神经场）。
+
+阶段 2：补全任务训练（部分输入，完整输出）
+目标：让模型掌握从部分结构推理完整全心结构的能力。
+步骤：
+
+在现有完整 10 类数据集上人为构造 partial masks，例如随机移除 2 至 5 个类，或按类别设计特定缺失方案。
+
+使用“输入部分结构，输出完整结构”的方式训练模型（partial to full）。
+
+确保模型能够根据输入的 incomplete 心脏形状推理出缺失的结构。
+输出：具备补全过程能力的模型版本。
+
+阶段 3：结构子集组合学习（subset 训练）
+目标：模拟未来跨数据集场景，使模型能从不同结构子集的组合中推理完整全心。
+步骤：
+
+定义两个或多个结构子集，例如 subset1 包含 5 个结构，subset2 包含另外 5 个结构。
+
+构造训练样本：输入 subset1 或 subset2，输出完整 10 类。
+
+训练模型学会从不同子集组合中恢复完整心脏（例如 subset1+subset2→full）。
+
+确认模型能在多种结构组合情况下恢复全心结构。
+输出：一个能够处理多来源、不同结构组合输入的补全模型。
+
+阶段 4：真实 partial label 学习
+目标：将补全过程推广到真实只标注部分结构的数据，使模型能在实际应用中完成全心补全。
+步骤：
+
+收集真实的部分标注数据集合（例如某些病例只标注 5 类、或外部数据集标注较少的结构）。
+
+将这些部分标注作为输入，通过前面训练过的模型进行补全训练或微调。
+
+验证模型在真实 partial label 场景下的补全效果。
+输出：一个能在真实临床或跨数据集场景中，自动从部分标注推理完整全心结构的模型。
+
+最终目标
+通过以上四个阶段，构建一个具备以下能力的系统：
+
+能表达完整 10 类心脏结构的隐式表征模型。
+
+能从不完整结构恢复完整心脏。
+
+能处理跨数据集、不同结构子集的输入。
+
+能在真实部分标注场景中实现全心补全。
+
+
+
+
+
+---------------------------------------------------------------------------------
+当前状态
+数据修复已完成，且具有完整 10 类 mask，因此可直接开始阶段 1（多类重建的 VecSetX 训练）。
+数据集路径：/home/user/persistent/vecset/repaired_shape
+各类别：
+1 : Myocardium : The muscle tissue surrounding the left ventricle blood pool
+2 : LA : The left atrium blood pool
+3 : LV : The left ventricle blood pool including the papilary muscles and trabeculation
+4 : RA : The right atrium blood pool
+5 : RV : The right ventricle blood pool
+6 : Aorta : The aorta including the aortic cusp
+7 : PA : The pulmonary artery
+8 : LAA : The left atrial appendage
+9 : Coronary : The left and right coronary arteries
+10 : PV : The pulmonary veins
+
+
+prepare_data.py数据准备脚本 (处理所有样本)（原始数据为 .nii.gz 格式的医学分割掩码，而 VecSetX 模型训练需要包含点云、SDF 值和表面法向量（可选）的 .npz 格式数据。此外，Phase 1 要求进行多类重建，因此需要在数据中包含类别信息。
+网格提取: 使用 skimage.measure.marching_cubes 从分割掩码中提取 3D 网格。
+表面采样: 实现了基于网格面积权重的表面点采样，确保采样点均匀分布。
+类别编码: 提取了 10 个解剖结构的类别标签，并对表面点进行了 One-hot 编码。生成的表面点数据维度为 (N, 13)，其中前 3 维为坐标，后 10 维为类别标签。
+SDF 计算: 使用 trimesh 和 rtree (KDTree) 计算体积点和近表面点的符号距离函数 (SDF) 值。为了提高速度，使用了法向量近似法。
+归一化: 将所有点坐标归一化到 [-1, 1] 范围，与模型输入要求一致。）:
+python /home/user/persistent/vecset/prepare_data.py --input_dir /home/user/persistent/vecset/repaired_shape --output_dir /home/user/persistent/vecset/data_npz
+
+
+create_csv.py更新数据集 CSV 文件: 
+Objaverse 数据集加载器需要 CSV 文件来索引训练和验证数据。
+扫描数据目录，自动生成 train.csv 和 val.csv。
+数据生成完成后，请运行此命令以更新 train.csv 和 val.csv，确保新数据被包含在内：
+python /home/user/persistent/vecset/create_csv.py
