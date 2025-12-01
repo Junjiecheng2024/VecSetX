@@ -102,3 +102,12 @@ GPU type	NVIDIA A100-SXM4-40GB
 Python version 3.10.14
 OS Linux-4.18.0-553.74.1.el8_10.x86_64-x86_64-with-glibc2.28
 MEM: 480Gi
+
+项目根目录：
+/projappl/project_2016517/JunjieCheng/VecSetX
+
+体素数据集：
+/scratch/project_2016517/junjie/dataset/repaired_shape
+
+点云数据集：
+/scratch/project_2016517/junjie/dataset/repaired_npz
