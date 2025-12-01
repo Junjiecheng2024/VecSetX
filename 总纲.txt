@@ -92,3 +92,13 @@ Objaverse 数据集加载器需要 CSV 文件来索引训练和验证数据。
 扫描数据目录，自动生成 train.csv 和 val.csv。
 数据生成完成后，请运行此命令以更新 train.csv 和 val.csv，确保新数据被包含在内：
 python /home/user/persistent/vecset/create_csv.py
+
+
+训练环境：
+CPU count	128
+Logical CPU count	256
+GPU count	4
+GPU type	NVIDIA A100-SXM4-40GB
+Python version 3.10.14
+OS Linux-4.18.0-553.74.1.el8_10.x86_64-x86_64-with-glibc2.28
+MEM: 480Gi

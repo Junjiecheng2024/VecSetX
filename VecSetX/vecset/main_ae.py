@@ -11,6 +11,7 @@ from pathlib import Path
 import torch
 import torch.backends.cudnn as cudnn
 from torch.utils.tensorboard import SummaryWriter
+import wandb
 
 torch.set_num_threads(8)
 
@@ -91,6 +92,7 @@ def get_args_parser():
     parser.add_argument('--dist_on_itp', action='store_true')
     parser.add_argument('--dist_url', default='env://',
                         help='url used to set up distributed training')
+    parser.add_argument('--wandb', action='store_true', help='Enable wandb logging')
 
     return parser
 
@@ -133,6 +135,10 @@ def main(args):
     if global_rank == 0 and args.log_dir is not None and not args.eval:
         os.makedirs(args.log_dir, exist_ok=True)
         log_writer = SummaryWriter(log_dir=args.log_dir)
+        if args.wandb:
+            # Replace with your actual WandB API key
+            wandb.login(key="d6891a1bb4397a24519ef1b36091aa1b77ea67e1")
+            wandb.init(project="VecSetAutoEncoder", config=args)
     else:
         log_writer = None
 
@@ -234,6 +240,9 @@ def main(args):
                 log_writer.flush()
             with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
+            
+            if args.wandb:
+                wandb.log(log_stats)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
