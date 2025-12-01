@@ -24,13 +24,15 @@ export OMP_NUM_THREADS=8
 mkdir -p logs
 
 # Run training with torchrun
+cd /projappl/project_2016517/JunjieCheng/VecSetX
+
 torchrun --nproc_per_node=4 --master_port=29500 VecSetX/vecset/main_ae.py \
     --batch_size 64 \
     --model learnable_vec1024x16_dim1024_depth24_nb \
     --point_cloud_size 8192 \
     --input_dim 13 \
     --epochs 800 \
-    --data_path /home/user/persistent/vecset/data_npz \
+    --data_path /scratch/project_2016517/junjie/dataset/repaired_npz \
     --output_dir output/ae/phase1_production \
     --log_dir output/ae/phase1_production \
     --wandb
