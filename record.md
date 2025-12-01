@@ -66,5 +66,28 @@
 *   **原因**: 提供一个便捷的脚本来启动训练，避免每次手动输入长命令。
 *   **修改内容**: 编写了 Bash 脚本，设置了 `PYTHONPATH`，并使用 `torchrun` 启动单机单卡训练，配置了正确的 batch size、epochs 和输出目录。
 
-## 总结
-通过以上修改，我们成功构建了一个端到端的训练流程：从原始医学图像数据到支持多类解剖结构重建的 VecSetX 模型训练。目前训练脚本已成功运行，并开始生成模型权重。
+## 6. 生产环境配置与监控 (Production Setup & Monitoring) [NEW]
+
+### 文件: `vecset/main_ae.py`
+*   **原因**: 
+    1.  集成 `wandb` 以进行实验监控。
+    2.  修复硬编码的数据路径，使其能够接受命令行参数 `--data_path`。
+    3.  清理代码中的重复部分。
+*   **修改内容**:
+    *   **WandB 集成**: 添加 `--wandb` 参数，并在主进程中初始化 `wandb`。
+    *   **API Key**: 添加了 `wandb.login(key="...")`，允许用户直接在代码中配置 API Key。
+    *   **路径修复**: 将 `Objaverse` 初始化中的 `dataset_folder` 参数改为使用 `args.data_path`。
+    *   **代码清理**: 移除了文件尾部重复的 `main` 函数定义。
+
+### 文件: `VecSetX/run_phase1_sbatch.sh` (新增)
+*   **原因**: 为 4x NVIDIA A100 集群创建 SLURM 提交脚本。
+*   **修改内容**:
+    *   **资源配置**: 4x A100 GPU, 32 CPUs/task, 24小时运行时限。
+    *   **环境设置**: 设置 `PYTHONPATH` 和 `OMP_NUM_THREADS`。
+    *   **路径配置**: 更新为集群上的实际路径 (`/projappl/...` 和 `/scratch/...`)。
+    *   **WandB**: 启用 `--wandb` 标志。
+
+### 决策记录
+*   **Batch Size**: 确认在 A100 40GB 上使用 `Batch Size 64` 是安全的（显存占用约 26GB）。`Batch Size 128` 可能会导致 OOM（估算约 46GB），建议通过 `--accum_iter 2` 来模拟。
+*   **框架选择**: 决定保持 **Native PyTorch** 架构，暂不迁移到 Lightning，以保持代码透明度和灵活性。
+*   **配置管理**: 决定在 Phase 1 跑通后再引入 YAML/Hydra 配置文件，目前继续使用 `argparse`。
