@@ -5,18 +5,6 @@ import datetime
 import json
 import numpy as np
 import utils.misc as misc
-from utils.objaverse import Objaverse
-
-from utils.misc import NativeScalerWithGradNormCount as NativeScaler
-
-from models import autoencoder
-from engines.engine_ae import train_one_epoch
-                        help='layer-wise lr decay from ELECTRA/BEiT')
-
-    parser.add_argument('--min_lr', type=float, default=1e-6, metavar='LR',
-                        help='lower lr bound for cyclic schedulers that hit 0')
-
-    parser.add_argument('--warmup_epochs', type=int, default=40, metavar='N',
                         help='epochs to warmup LR')
 
 
