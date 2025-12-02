@@ -82,7 +82,7 @@
 ### 文件: `VecSetX/run_phase1_sbatch.sh` (新增)
 *   **原因**: 为 4x NVIDIA A100 集群创建 SLURM 提交脚本。
 *   **修改内容**:
-    *   **资源配置**: 4x A100 GPU, 32 CPUs/task, 24小时运行时限。
+    *   **资源配置**: 4x A100 GPU, 32 CPUs/task, 36小时运行时限。
     *   **环境设置**: 设置 `PYTHONPATH` 和 `OMP_NUM_THREADS`。
     *   **路径配置**: 更新为集群上的实际路径 (`/projappl/...` 和 `/scratch/...`)。
     *   **WandB**: 启用 `--wandb` 标志。
