@@ -15,7 +15,8 @@ mkdir -p logs
 cd /projappl/project_2016517/JunjieCheng/VecSetX
 
 torchrun --nproc_per_node=1 --master_port=29500 VecSetX/vecset/main_ae.py \
-    --batch_size 64 \
+    --batch_size 8 \
+    --accum_iter 8 \
     --model learnable_vec1024x16_dim1024_depth24_nb \
     --point_cloud_size 8192 \
     --input_dim 13 \
