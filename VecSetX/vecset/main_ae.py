@@ -4,18 +4,6 @@ import argparse
 import datetime
 import json
 import numpy as np
-import os
-import time
-from pathlib import Path
-
-import torch
-import torch.backends.cudnn as cudnn
-from torch.utils.tensorboard import SummaryWriter
-import wandb
-
-torch.set_num_threads(8)
-
-import utils.lr_decay as lrd
 import utils.misc as misc
 from utils.objaverse import Objaverse
 
