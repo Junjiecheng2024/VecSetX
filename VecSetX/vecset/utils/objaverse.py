@@ -35,7 +35,8 @@ class Objaverse(data.Dataset):
         self.npz_folder = dataset_folder
         self.normal_folder = dataset_folder.replace('objaverse', 'objaverse_normals')
 
-        with open('utils/objaverse_{}.csv'.format(split), newline='') as csvfile:
+        csv_path = os.path.join(os.path.dirname(__file__), 'objaverse_{}.csv'.format(split))
+        with open(csv_path, newline='') as csvfile:
             reader = csv.reader(csvfile, delimiter=',')
 
             model_filenames = [(os.path.join(self.npz_folder, row[0], row[1]+'.npz'), row[2]) for row in reader]
