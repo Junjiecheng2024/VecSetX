@@ -111,3 +111,5 @@ MEM: 480Gi
 
 点云数据集：
 /scratch/project_2016517/junjie/dataset/repaired_npz
+
+单卡测试完成。现在运行4卡训练。
