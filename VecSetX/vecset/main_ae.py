@@ -111,22 +111,6 @@ def main(args):
         os.makedirs(args.log_dir, exist_ok=True)
         log_writer = SummaryWriter(log_dir=args.log_dir)
         if args.wandb:
-            # Replace with your actual WandB API key
-            wandb.login(key="d6891a1bb4397a24519ef1b36091aa1b77ea67e1")
-            wandb.init(project="VecSetAutoEncoder", config=args)
-    else:
-        log_writer = None
-
-    data_loader_train = torch.utils.data.DataLoader(
-        dataset_train, sampler=sampler_train,
-        batch_size=args.batch_size,
-    print('number of params (M): %.2f' % (n_parameters / 1.e6))
-
-    eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size()
-    
-    if args.lr is None:  # only base_lr is specified
-        args.lr = args.blr * eff_batch_size / 256
-
     print("base lr: %.2e" % (args.lr * 256 / eff_batch_size))
     print("actual lr: %.2e" % args.lr)
 
