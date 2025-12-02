@@ -1,4 +1,5 @@
 #!/bin/bash
+#SBATCH -A project_2016526
 #SBATCH --job-name=vecset_phase1
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4

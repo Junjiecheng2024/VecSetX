@@ -1,0 +1,74 @@
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/projappl/project_2016517/JunjieCheng/VecSetX/VecSetX/vecset/main_ae.py", line 13, in <module>
+  File "/projappl/project_2016517/JunjieCheng/VecSetX/VecSetX/vecset/main_ae.py", line 13, in <module>
+    from torch.utils.tensorboard import SummaryWriter
+  File "/projappl/project_2016517/JunjieCheng/junjieenv/lib/python3.10/site-packages/torch/utils/tensorboard/__init__.py", line 1, in <module>
+    from torch.utils.tensorboard import SummaryWriter
+  File "/projappl/project_2016517/JunjieCheng/junjieenv/lib/python3.10/site-packages/torch/utils/tensorboard/__init__.py", line 1, in <module>
+Traceback (most recent call last):
+  File "/projappl/project_2016517/JunjieCheng/VecSetX/VecSetX/vecset/main_ae.py", line 13, in <module>
+    from torch.utils.tensorboard import SummaryWriter
+  File "/projappl/project_2016517/JunjieCheng/junjieenv/lib/python3.10/site-packages/torch/utils/tensorboard/__init__.py", line 1, in <module>
+        import tensorboardimport tensorboard
+
+ModuleNotFoundErrorModuleNotFoundError: : No module named 'tensorboard'No module named 'tensorboard'
+
+    import tensorboard
+ModuleNotFoundError: No module named 'tensorboard'
+Traceback (most recent call last):
+  File "/projappl/project_2016517/JunjieCheng/VecSetX/VecSetX/vecset/main_ae.py", line 13, in <module>
+    from torch.utils.tensorboard import SummaryWriter
+  File "/projappl/project_2016517/JunjieCheng/junjieenv/lib/python3.10/site-packages/torch/utils/tensorboard/__init__.py", line 1, in <module>
+    import tensorboard
+ModuleNotFoundError: No module named 'tensorboard'
+E1202 15:16:49.307000 19137 torch/distributed/elastic/multiprocessing/api.py:882] failed (exitcode: 1) local_rank: 0 (pid: 19220) of binary: /projappl/project_2016517/JunjieCheng/junjieenv/bin/python
+Traceback (most recent call last):
+  File "/projappl/project_2016517/JunjieCheng/junjieenv/bin/torchrun", line 8, in <module>
+    sys.exit(main())
+  File "/projappl/project_2016517/JunjieCheng/junjieenv/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
+    return f(*args, **kwargs)
+  File "/projappl/project_2016517/JunjieCheng/junjieenv/lib/python3.10/site-packages/torch/distributed/run.py", line 936, in main
+    run(args)
+  File "/projappl/project_2016517/JunjieCheng/junjieenv/lib/python3.10/site-packages/torch/distributed/run.py", line 927, in run
+    elastic_launch(
+  File "/projappl/project_2016517/JunjieCheng/junjieenv/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 156, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/projappl/project_2016517/JunjieCheng/junjieenv/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 293, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+VecSetX/vecset/main_ae.py FAILED
+------------------------------------------------------------
+Failures:
+[1]:
+  time      : 2025-12-02_15:16:49
+  host      : g2102.mahti.csc.fi
+  rank      : 1 (local_rank: 1)
+  exitcode  : 1 (pid: 19221)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+[2]:
+  time      : 2025-12-02_15:16:49
+  host      : g2102.mahti.csc.fi
+  rank      : 2 (local_rank: 2)
+  exitcode  : 1 (pid: 19222)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+[3]:
+  time      : 2025-12-02_15:16:49
+  host      : g2102.mahti.csc.fi
+  rank      : 3 (local_rank: 3)
+  exitcode  : 1 (pid: 19223)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2025-12-02_15:16:49
+  host      : g2102.mahti.csc.fi
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 19220)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
