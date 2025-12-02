@@ -8,11 +8,17 @@ import torch.nn.functional as F
 
 from einops import rearrange, repeat
 
-
+try:
+    from torch_cluster import fps
+except ImportError:
+    fps = None
 
 import math
 
-from flash_attn import flash_attn_kvpacked_func
+try:
+    from flash_attn import flash_attn_kvpacked_func
+except ImportError:
+    flash_attn_kvpacked_func = None
 
 def exists(val):
     return val is not None
@@ -68,78 +74,34 @@ class Attention(nn.Module):
 
         q = rearrange(q, 'b n (h d) -> b n h d', h = h)
         kv = rearrange(kv, 'b n (p h d) -> b n p h d', h = h, p=2)
-# Copyright (c) 2025, Biao Zhang.
 
-import numpy as np
+        if 'flash_attn_kvpacked_func' in globals() and flash_attn_kvpacked_func is not None:
+            out = flash_attn_kvpacked_func(q.bfloat16(), kv.bfloat16(), window_size=(window_size, window_size))
+            out = out.to(x.dtype)
+        else:
+            # Fallback to torch.nn.functional.scaled_dot_product_attention
+            # q: b n h d
+            # kv: b n 2 h d
+            k = kv[:, :, 0]
+            v = kv[:, :, 1]
+            
+            # SDPA expects (batch, heads, seq_len, dim)
+            q_t = q.transpose(1, 2)
+            k_t = k.transpose(1, 2)
+            v_t = v.transpose(1, 2)
+            
+            out = F.scaled_dot_product_attention(q_t, k_t, v_t)
+            
+            # Transpose back to (batch, seq_len, heads, dim)
+            out = out.transpose(1, 2)
 
-# Copyright (c) 2025, Biao Zhang.
-
-import numpy as np
-
-import torch
-from torch import nn, einsum
-import torch.nn.functional as F
-
-from einops import rearrange, repeat
-
-try:
-    from torch_cluster import fps
-except ImportError:
-    fps = None
-
-import math
-
-from flash_attn import flash_attn_kvpacked_func
-
-def exists(val):
-    return val is not None
-
-def default(val, d):
-    return val if exists(val) else d
-
-class PreNorm(nn.Module):
-    def __init__(self, dim, fn):
+        return self.to_out(rearrange(out, 'b n h d -> b n (h d)'))
+        
+class PointEmbed(nn.Module):
+    def __init__(self, hidden_dim=48, dim=128, input_dim=3):
         super().__init__()
-        self.fn = fn
-        self.norm = nn.LayerNorm(dim)
 
-    def forward(self, x, **kwargs):
-        x = self.norm(x)
-        return self.fn(x, **kwargs)
-
-class GEGLU(nn.Module):
-    def forward(self, x):
-        x, gates = x.chunk(2, dim = -1)
-        return x * F.gelu(gates)
-
-class FeedForward(nn.Module):
-    def __init__(self, dim, mult = 4):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(dim, dim * mult * 2),
-            GEGLU(),
-            nn.Linear(dim * mult, dim)
-        )
-
-    def forward(self, x):
-        return self.net(x)
-
-class Attention(nn.Module):
-    def __init__(self, query_dim, context_dim = None, heads = 8, dim_head = 64):
-        super().__init__()
-        inner_dim = dim_head * heads
-        context_dim = default(context_dim, query_dim)
-        self.scale = dim_head ** -0.5
-        self.heads = heads
-
-        self.to_q = nn.Linear(query_dim, inner_dim, bias = False)
-        self.to_kv = nn.Linear(context_dim, inner_dim * 2, bias = False)
-        self.to_out = nn.Linear(inner_dim, query_dim)
-
-    def forward(self, x, context = None, mask = None, window_size=-1):
-        h = self.heads
-
-        q = self.to_q(x)
+        assert hidden_dim % 6 == 0
 
         self.embedding_dim = hidden_dim
         e = torch.pow(2, torch.arange(self.embedding_dim // 6)).float() * np.pi
