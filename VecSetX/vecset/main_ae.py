@@ -4,18 +4,6 @@ import argparse
 import datetime
 import json
 import numpy as np
-import os
-import time
-from pathlib import Path
-
-import torch
-import torch.backends.cudnn as cudnn
-from torch.utils.tensorboard import SummaryWriter
-
-import utils.misc as misc
-from utils.objaverse import Objaverse
-from utils.misc import NativeScalerWithGradNormCount as NativeScaler
-from models import autoencoder
 from engines.engine_ae import train_one_epoch
 
 import wandb
@@ -124,33 +112,6 @@ def main(args):
                       'equal num of samples per-process.')
             sampler_val = torch.utils.data.DistributedSampler(
                 dataset_val, num_replicas=num_tasks, rank=global_rank, shuffle=True)  # shuffle=True to reduce monitor bias
-        else:
-            sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-    else:
-        sampler_train = torch.utils.data.RandomSampler(dataset_train)
-        sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-
-    if global_rank == 0 and args.log_dir is not None and not args.eval:
-        os.makedirs(args.log_dir, exist_ok=True)
-        try:
-            log_writer = SummaryWriter(log_dir=args.log_dir)
-        except ImportError:
-            # Fallback to tensorboardX if torch.utils.tensorboard is not available
-            from tensorboardX import SummaryWriter
-            log_writer = SummaryWriter(log_dir=args.log_dir)
-            
-        if args.wandb:
-            # Replace with your actual WandB API key
-            wandb.login(key="d6891a1bb4397a24519ef1b36091aa1b77ea67e1")
-            wandb.init(project="VecSetAutoEncoder", config=args)
-    else:
-        log_writer = None
-
-    data_loader_train = torch.utils.data.DataLoader(
-        dataset_train, sampler=sampler_train,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_mem,
         drop_last=True,
         prefetch_factor=2,
     )
