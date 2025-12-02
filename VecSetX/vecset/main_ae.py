@@ -106,20 +106,6 @@ def main(args):
         )
         print("Sampler_train = %s" % str(sampler_train))
         if args.dist_eval:
-            if len(dataset_val) % num_tasks != 0:
-                print('Warning: Enabling distributed evaluation with an eval dataset not divisible by process number. '
-                      'This will slightly alter validation results as extra duplicate entries are added to achieve '
-                      'equal num of samples per-process.')
-            sampler_val = torch.utils.data.DistributedSampler(
-                dataset_val, num_replicas=num_tasks, rank=global_rank, shuffle=True)  # shuffle=True to reduce monitor bias
-        drop_last=True,
-        prefetch_factor=2,
-    )
-
-    model = autoencoder.__dict__[args.model](pc_size=args.point_cloud_size, input_dim=args.input_dim)
-    model.to(device)
-
-    model_without_ddp = model
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     print("Model = %s" % str(model_without_ddp))
