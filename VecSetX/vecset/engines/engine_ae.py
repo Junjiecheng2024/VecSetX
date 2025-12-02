@@ -57,7 +57,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     # criterion = torch.nn.L1Loss()
 
     if log_writer is not None:
-        print('log_dir: {}'.format(log_writer.log_dir))
+        print('log_dir: {}'.format(log_writer.logdir))
 
     for data_iter_step, (points, labels, surface, _, _) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
 
