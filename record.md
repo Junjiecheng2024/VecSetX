@@ -91,3 +91,48 @@
 *   **Batch Size**: 确认在 A100 40GB 上使用 `Batch Size 64` 是安全的（显存占用约 26GB）。`Batch Size 128` 可能会导致 OOM（估算约 46GB），建议通过 `--accum_iter 2` 来模拟。
 *   **框架选择**: 决定保持 **Native PyTorch** 架构，暂不迁移到 Lightning，以保持代码透明度和灵活性。
 *   **配置管理**: 决定在 Phase 1 跑通后再引入 YAML/Hydra 配置文件，目前继续使用 `argparse`。
+
+## 7. 调试与修复记录 (Debugging & Fixes) [NEW]
+
+在单机单卡 (Single GPU) 环境下验证训练脚本 `run_phase1_test.sh` 时，遇到并解决了以下一系列问题：
+
+### 7.1 依赖缺失与兼容性 (Dependencies)
+*   **问题**: `ModuleNotFoundError: No module named 'tensorboard'`。
+*   **原因**: 环境中未安装 `tensorboard`，但安装了 `tensorboardX`。
+*   **修复**: 在 `vecset/main_ae.py` 中添加回退机制，优先尝试导入 `torch.utils.tensorboard`，失败则尝试导入 `tensorboardX`。
+
+### 7.2 代码属性错误 (AttributeError)
+*   **问题**: `AttributeError: 'SummaryWriter' object has no attribute 'log_dir'`。
+*   **原因**: `tensorboardX` 的 `SummaryWriter` 对象使用 `logdir` 属性，而非 `log_dir`。
+*   **修复**: 修改 `vecset/engines/engine_ae.py`，将 `log_writer.log_dir` 更正为 `log_writer.logdir`。
+
+### 7.3 文件路径错误 (FileNotFoundError)
+*   **问题**: `FileNotFoundError: [Errno 2] No such file or directory: 'utils/objaverse_train.csv'`。
+*   **原因**: `vecset/utils/objaverse.py` 使用相对路径加载 CSV 文件，导致在不同目录下运行脚本时路径失效。
+*   **修复**: 修改 `vecset/utils/objaverse.py`，使用 `os.path.dirname(__file__)` 构建绝对路径，确保无论在哪里运行脚本都能正确找到 CSV 文件。
+
+### 7.4 显存溢出 (CUDA OutOfMemory)
+*   **问题**: `torch.OutOfMemoryError: CUDA out of memory`。
+*   **原因**: 在 A100 (40GB) 上，`Batch Size 64` 结合当前模型配置导致显存不足。
+*   **修复**:
+    *   在 `run_phase1_test.sh` 中将 `batch_size` 降低至 **2**。
+    *   将 `accum_iter` (梯度累积步数) 增加至 **32**，以保持 Effective Batch Size 为 64 (2 * 32)。
+    *   设置环境变量 `PYTORCH_ALLOC_CONF=expandable_segments:True` 以优化显存碎片管理。
+
+### 7.5 注意力机制反向传播错误 (RuntimeError)
+*   **问题**: `RuntimeError: derivative for aten::_scaled_dot_product_efficient_attention_backward is not implemented`。
+*   **原因**: PyTorch 的 `F.scaled_dot_product_attention` 在使用 "efficient" 内核时，不支持当前输入配置的反向传播。
+*   **修复**: 修改 `vecset/models/utils.py`，移除了对 PyTorch SDPA 的依赖，改用**手动实现的点积注意力 (Manual Scaled Dot-Product Attention)** 作为回退方案。这虽然牺牲了少量速度，但保证了反向传播的稳定性。
+
+### 7.6 缩进错误 (IndentationError)
+*   **问题**: `IndentationError: expected an indented block after 'else' statement`。
+*   **原因**: 在修复 SDPA 问题时，编辑操作导致 `else` 分支下的代码块丢失。
+*   **修复**: 恢复了 `vecset/models/utils.py` 中丢失的手动注意力实现代码。
+
+### 7.7 显存占用分析 (Memory Usage Analysis)
+*   **现象**: 即使 Batch Size 降为 2，显存占用仍高达 34GB。
+*   **原因**:
+    1.  **Eikonal Loss (二阶导数)**: 计算 `points_gradient` 需要 `create_graph=True`，导致 PyTorch 保存整个前向传播图以计算二阶导数，显存占用翻倍。
+    2.  **手动 Attention**: 为了规避 SDPA 反向传播错误，手动实现的 Attention 需要显式存储巨大的注意力矩阵 (Batch=2, Heads=16, Q=1024/8192, K=16384/1024)，占用数 GB 显存。
+    3.  **模型规模**: 4.25亿参数的模型本身及其优化器状态占用约 7GB。
+*   **结论**: 当前配置 (Batch Size 2, Accum Iter 32) 是 A100 (40GB) 上的安全运行阈值。

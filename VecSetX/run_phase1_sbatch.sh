@@ -24,11 +24,14 @@ export OMP_NUM_THREADS=8
 # Create logs directory
 mkdir -p logs
 
+export PYTORCH_ALLOC_CONF=expandable_segments:True
+
 # Run training with torchrun
 cd /projappl/project_2016517/JunjieCheng/VecSetX
 
 torchrun --nproc_per_node=4 --master_port=29500 VecSetX/vecset/main_ae.py \
-    --batch_size 64 \
+    --batch_size 2 \
+    --accum_iter 8 \
     --model learnable_vec1024x16_dim1024_depth24_nb \
     --point_cloud_size 8192 \
     --input_dim 13 \
