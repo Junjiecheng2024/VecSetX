@@ -99,19 +99,6 @@ def main(args):
     dataset_val = Objaverse(split='val', sdf_sampling=True, sdf_size=1024, surface_sampling=True, surface_size=args.point_cloud_size, dataset_folder=args.data_path)
 
     if True:  # args.distributed:
-        num_tasks = misc.get_world_size()
-        global_rank = misc.get_rank()
-        sampler_train = torch.utils.data.DistributedSampler(
-            dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
-        )
-        print("Sampler_train = %s" % str(sampler_train))
-        if args.dist_eval:
-    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-    print("Model = %s" % str(model_without_ddp))
-    print('number of params (M): %.2f' % (n_parameters / 1.e6))
-
-    eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size()
     
     if args.lr is None:  # only base_lr is specified
         args.lr = args.blr * eff_batch_size / 256
