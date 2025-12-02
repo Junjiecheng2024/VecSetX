@@ -11,7 +11,7 @@ export OMP_NUM_THREADS=8
 # Create logs directory
 mkdir -p logs
 
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export PYTORCH_ALLOC_CONF=expandable_segments:True
 
 # Run training with torchrun
 cd /projappl/project_2016517/JunjieCheng/VecSetX
