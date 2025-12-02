@@ -11,20 +11,6 @@ from utils.misc import NativeScalerWithGradNormCount as NativeScaler
 
 from models import autoencoder
 from engines.engine_ae import train_one_epoch
-
-def get_args_parser():
-    parser = argparse.ArgumentParser('VecSetAutoEncoder', add_help=False)
-    parser.add_argument('--batch_size', default=64, type=int,
-                        help='Batch size per GPU (effective batch size is batch_size * accum_iter * # gpus')
-    parser.add_argument('--epochs', default=800, type=int)
-    parser.add_argument('--accum_iter', default=1, type=int,
-                        help='weight decay (default: 0.05)')
-
-    parser.add_argument('--lr', type=float, default=None, metavar='LR',
-                        help='learning rate (absolute lr)')
-    parser.add_argument('--blr', type=float, default=1e-4, metavar='LR',
-                        help='base learning rate: absolute_lr = base_lr * total_batch_size / 256')
-    parser.add_argument('--layer_decay', type=float, default=0.75,
                         help='layer-wise lr decay from ELECTRA/BEiT')
 
     parser.add_argument('--min_lr', type=float, default=1e-6, metavar='LR',
