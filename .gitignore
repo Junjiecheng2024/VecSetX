@@ -2,7 +2,7 @@
 *.obj
 samples/
 shapenet*
-*.csv
+# *.csv
 *.empty
 __pycache__
 build
