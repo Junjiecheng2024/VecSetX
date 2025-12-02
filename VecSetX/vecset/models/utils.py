@@ -79,24 +79,6 @@ class Attention(nn.Module):
             out = flash_attn_kvpacked_func(q.bfloat16(), kv.bfloat16(), window_size=(window_size, window_size))
             out = out.to(x.dtype)
         else:
-            # Fallback to torch.nn.functional.scaled_dot_product_attention
-            # q: b n h d
-            # kv: b n 2 h d
-            k = kv[:, :, 0]
-            v = kv[:, :, 1]
-            
-            # SDPA expects (batch, heads, seq_len, dim)
-            q_t = q.transpose(1, 2)
-            k_t = k.transpose(1, 2)
-            v_t = v.transpose(1, 2)
-            
-            out = F.scaled_dot_product_attention(q_t, k_t, v_t)
-            
-            # Transpose back to (batch, seq_len, heads, dim)
-            out = out.transpose(1, 2)
-
-        return self.to_out(rearrange(out, 'b n h d -> b n (h d)'))
-        
 class PointEmbed(nn.Module):
     def __init__(self, hidden_dim=48, dim=128, input_dim=3):
         super().__init__()
