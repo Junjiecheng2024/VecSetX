@@ -4,6 +4,26 @@ import argparse
 import datetime
 import json
 import numpy as np
+import os
+import time
+from pathlib import Path
+
+import torch
+import torch.backends.cudnn as cudnn
+
+# Handle tensorboard import with fallback
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except ImportError:
+    try:
+        from tensorboardX import SummaryWriter
+    except ImportError:
+        SummaryWriter = None
+
+import utils.misc as misc
+from utils.objaverse import Objaverse
+from utils.misc import NativeScalerWithGradNormCount as NativeScaler
+from models import autoencoder
 from engines.engine_ae import train_one_epoch
 
 import wandb
@@ -99,6 +119,59 @@ def main(args):
     dataset_val = Objaverse(split='val', sdf_sampling=True, sdf_size=1024, surface_sampling=True, surface_size=args.point_cloud_size, dataset_folder=args.data_path)
 
     if True:  # args.distributed:
+        num_tasks = misc.get_world_size()
+        global_rank = misc.get_rank()
+        sampler_train = torch.utils.data.DistributedSampler(
+            dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
+        )
+        print("Sampler_train = %s" % str(sampler_train))
+        if args.dist_eval:
+            if len(dataset_val) % num_tasks != 0:
+                print('Warning: Enabling distributed evaluation with an eval dataset not divisible by process number. '
+                      'This will slightly alter validation results as extra duplicate entries are added to achieve '
+                      'equal num of samples per-process.')
+            sampler_val = torch.utils.data.DistributedSampler(
+                dataset_val, num_replicas=num_tasks, rank=global_rank, shuffle=True)  # shuffle=True to reduce monitor bias
+        else:
+            sampler_val = torch.utils.data.SequentialSampler(dataset_val)
+    else:
+        sampler_train = torch.utils.data.RandomSampler(dataset_train)
+        sampler_val = torch.utils.data.SequentialSampler(dataset_val)
+
+    if global_rank == 0 and args.log_dir is not None and not args.eval:
+        os.makedirs(args.log_dir, exist_ok=True)
+        if SummaryWriter is not None:
+            log_writer = SummaryWriter(log_dir=args.log_dir)
+        else:
+            log_writer = None
+            print("Warning: Tensorboard not available, skipping logging.")
+            
+        if args.wandb:
+            # Replace with your actual WandB API key
+            wandb.login(key="d6891a1bb4397a24519ef1b36091aa1b77ea67e1")
+            wandb.init(project="VecSetAutoEncoder", config=args)
+    else:
+        log_writer = None
+
+    data_loader_train = torch.utils.data.DataLoader(
+        dataset_train, sampler=sampler_train,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        pin_memory=args.pin_mem,
+        drop_last=True,
+        prefetch_factor=2,
+    )
+
+    model = autoencoder.__dict__[args.model](pc_size=args.point_cloud_size, input_dim=args.input_dim)
+    model.to(device)
+
+    model_without_ddp = model
+    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    print("Model = %s" % str(model_without_ddp))
+    print('number of params (M): %.2f' % (n_parameters / 1.e6))
+
+    eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size()
     
     if args.lr is None:  # only base_lr is specified
         args.lr = args.blr * eff_batch_size / 256
