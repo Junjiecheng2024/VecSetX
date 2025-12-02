@@ -84,14 +84,14 @@ prepare_data.py数据准备脚本 (处理所有样本)（原始数据为 .nii.gz
 类别编码: 提取了 10 个解剖结构的类别标签，并对表面点进行了 One-hot 编码。生成的表面点数据维度为 (N, 13)，其中前 3 维为坐标，后 10 维为类别标签。
 SDF 计算: 使用 trimesh 和 rtree (KDTree) 计算体积点和近表面点的符号距离函数 (SDF) 值。为了提高速度，使用了法向量近似法。
 归一化: 将所有点坐标归一化到 [-1, 1] 范围，与模型输入要求一致。）:
-python /home/user/persistent/vecset/prepare_data.py --input_dir /home/user/persistent/vecset/repaired_shape --output_dir /home/user/persistent/vecset/data_npz
+python vecset/prepare_data.py --input_dir /home/user/persistent/vecset/repaired_shape --output_dir /home/user/persistent/vecset/data_npz
 
 
 create_csv.py更新数据集 CSV 文件: 
 Objaverse 数据集加载器需要 CSV 文件来索引训练和验证数据。
 扫描数据目录，自动生成 train.csv 和 val.csv。
 数据生成完成后，请运行此命令以更新 train.csv 和 val.csv，确保新数据被包含在内：
-python /home/user/persistent/vecset/create_csv.py
+python create_csv.py
 
 
 训练环境：
