@@ -216,12 +216,11 @@ def main(args):
             args=args
         )
 
-        if args.output_dir and (epoch % 5 == 0 or epoch + 1 == args.epochs):
-            print(f"Saving model at epoch {epoch}...")
+        # Save 'last' checkpoint every epoch to ensure resume capability
+        if args.output_dir:
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                loss_scaler=loss_scaler, epoch=epoch)
-            print(f"Model saved at epoch {epoch}.")
+                loss_scaler=loss_scaler, epoch=epoch, tag='last')
 
         if epoch % 5 == 0 or epoch + 1 == args.epochs:
             print(f"Starting validation at epoch {epoch}...")
@@ -230,8 +229,17 @@ def main(args):
                 print(f"Validation completed at epoch {epoch}.")
 
                 print(f"iou of the network on the {len(dataset_val)} test images: {test_stats['iou']:.3f}")
-                max_iou = max(max_iou, test_stats["iou"])
-                print(f'Max iou: {max_iou:.2f}%')
+                
+                # Save 'best' checkpoint if IoU improves
+                if test_stats["iou"] > max_iou:
+                    max_iou = test_stats["iou"]
+                    print(f'New max IoU: {max_iou:.2f}%. Saving best model...')
+                    if args.output_dir:
+                        misc.save_model(
+                            args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
+                            loss_scaler=loss_scaler, epoch=epoch, tag='best')
+                else:
+                    print(f'Max iou: {max_iou:.2f}%')
 
                 if log_writer is not None:
                     # log_writer.add_scalar('perf/test_iou', test_stats['iou'], epoch)
