@@ -69,20 +69,6 @@ class Attention(nn.Module):
         h = self.heads
 
         q = self.to_q(x)
-        context = default(context, x)
-        kv = self.to_kv(context)
-
-        q = rearrange(q, 'b n (h d) -> b n h d', h = h)
-        kv = rearrange(kv, 'b n (p h d) -> b n p h d', h = h, p=2)
-
-        if 'flash_attn_kvpacked_func' in globals() and flash_attn_kvpacked_func is not None:
-            out = flash_attn_kvpacked_func(q.bfloat16(), kv.bfloat16(), window_size=(window_size, window_size))
-            out = out.to(x.dtype)
-        else:
-            # Fallback to manual implementation
-            # q: b n h d
-            # kv: b n 2 h d
-            k = kv[:, :, 0]
             v = kv[:, :, 1]
             
             # SDPA expects (batch, heads, seq_len, dim)

@@ -149,3 +149,58 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+
+@torch.no_grad()
+def evaluate(data_loader, model, device):
+    criterion = torch.nn.L1Loss()
+
+    metric_logger = misc.MetricLogger(delimiter="  ")
+    header = 'Test:'
+
+    # switch to evaluation mode
+    model.eval()
+
+    for batch in metric_logger.log_every(data_loader, 10, header):
+        points = batch[0]
+        labels = batch[1]
+        surface = batch[2]
+        
+        points = points.to(device, non_blocking=True)
+        labels = labels.to(device, non_blocking=True).squeeze(-1)
+        surface = surface.to(device, non_blocking=True)
+
+        # compute output
+        with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=False):
+            points_all = torch.cat([points, surface[:, :, :3]], dim=1)
+            outputs = model(surface, points_all)
+            output = outputs['o']
+
+            loss_vol = criterion(output[:, :1024], labels[:, :1024])
+            loss_near = criterion(output[:, 1024:2048], labels[:, 1024:2048])
+            loss_surface = (output[:, 2048:]).abs().mean()
+            
+            # Note: We skip eikonal loss in validation as it requires gradients
+            
+            loss = loss_vol + 10 * loss_near + 1 * loss_surface
+
+        threshold = 0
+        vol_iou = calc_iou(output[:, :1024], labels[:, :1024], threshold)
+        near_iou = calc_iou(output[:, 1024:2048], labels[:, 1024:2048], threshold)
+
+        batch_size = points.shape[0]
+        metric_logger.update(loss=loss.item())
+        metric_logger.update(loss_vol=loss_vol.item())
+        metric_logger.update(loss_near=loss_near.item())
+        metric_logger.update(loss_surface=loss_surface.item())
+        metric_logger.update(vol_iou=vol_iou.item())
+        metric_logger.update(near_iou=near_iou.item())
+        
+        # Combined IoU for reporting
+        metric_logger.update(iou=(vol_iou.item() + near_iou.item()) / 2.0)
+
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    print('* IoU {iou.global_avg:.3f} loss {losses.global_avg:.3f}'
+          .format(iou=metric_logger.iou, losses=metric_logger.loss))
+
+    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}

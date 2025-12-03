@@ -24,7 +24,7 @@ import utils.misc as misc
 from utils.objaverse import Objaverse
 from utils.misc import NativeScalerWithGradNormCount as NativeScaler
 from models import autoencoder
-from engines.engine_ae import train_one_epoch
+from engines.engine_ae import train_one_epoch, evaluate
 
 import wandb
 
@@ -200,11 +200,6 @@ def main(args):
 
     misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
 
-    # if args.eval:
-    #     test_stats = evaluate(data_loader_val, model, device)
-    #     print(f"iou of the network on the {len(dataset_val)} test images: {test_stats['iou']:.3f}")
-    #     exit(0)
-
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
     max_iou = 0.0
@@ -212,7 +207,6 @@ def main(args):
         
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
-        # test_stats = evaluate(data_loader_val, model, device)
 
         train_stats = train_one_epoch(
             model, criterion, data_loader_train,
@@ -221,30 +215,44 @@ def main(args):
             log_writer=log_writer,
             args=args
         )
+
         if args.output_dir and (epoch % 5 == 0 or epoch + 1 == args.epochs):
+            print(f"Saving model at epoch {epoch}...")
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                 loss_scaler=loss_scaler, epoch=epoch)
+            print(f"Model saved at epoch {epoch}.")
 
-        # if epoch % 5 == 0 or epoch + 1 == args.epochs:
-        #     # test_stats = evaluate(data_loader_val, model, device)
+        if epoch % 5 == 0 or epoch + 1 == args.epochs:
+            print(f"Starting validation at epoch {epoch}...")
+            try:
+                test_stats = evaluate(data_loader_val, model, device)
+                print(f"Validation completed at epoch {epoch}.")
 
-        #     # print(f"iou of the network on the {len(dataset_val)} test images: {test_stats['iou']:.3f}")
-        #     # max_iou = max(max_iou, test_stats["iou"])
-        #     # print(f'Max iou: {max_iou:.2f}%')
+                print(f"iou of the network on the {len(dataset_val)} test images: {test_stats['iou']:.3f}")
+                max_iou = max(max_iou, test_stats["iou"])
+                print(f'Max iou: {max_iou:.2f}%')
 
-        #     # if log_writer is not None:
-        #     #     # log_writer.add_scalar('perf/test_iou', test_stats['iou'], epoch)
-        #     #     log_writer.add_scalar('perf/test_loss', test_stats['loss'], epoch)
+                if log_writer is not None:
+                    # log_writer.add_scalar('perf/test_iou', test_stats['iou'], epoch)
+                    log_writer.add_scalar('perf/test_loss', test_stats['loss'], epoch)
 
-        #     log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-        #                     # **{f'test_{k}': v for k, v in test_stats.items()},
-        #                     'epoch': epoch,
-        #                     'n_parameters': n_parameters}
-        # else:
-        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                        'epoch': epoch,
-                        'n_parameters': n_parameters}
+                log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
+                                **{f'test_{k}': v for k, v in test_stats.items()},
+                                'epoch': epoch,
+                                'n_parameters': n_parameters}
+            except Exception as e:
+                print(f"Error during validation at epoch {epoch}: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue training even if validation fails
+                log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
+                                'epoch': epoch,
+                                'n_parameters': n_parameters}
+        else:
+            log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
+                            'epoch': epoch,
+                            'n_parameters': n_parameters}
 
         if args.output_dir and misc.is_main_process():
             if log_writer is not None:
