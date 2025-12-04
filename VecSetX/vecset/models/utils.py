@@ -69,21 +69,31 @@ class Attention(nn.Module):
         h = self.heads
 
         q = self.to_q(x)
-            v = kv[:, :, 1]
-            
-            # SDPA expects (batch, heads, seq_len, dim)
-            q_t = q.transpose(1, 2)
-            k_t = k.transpose(1, 2)
-            v_t = v.transpose(1, 2)
-            
-            # Manual implementation to ensure backward pass works
-            scale = self.scale
-            sim = torch.matmul(q_t, k_t.transpose(-2, -1)) * scale
-            attn = sim.softmax(dim=-1)
-            out = torch.matmul(attn, v_t)
-            
-            # Transpose back to (batch, seq_len, heads, dim)
-            out = out.transpose(1, 2)
+        context = default(context, x)
+        kv = self.to_kv(context)
+
+        q = rearrange(q, 'b n (h d) -> b n h d', h = h)
+        kv = rearrange(kv, 'b n (p h d) -> b n p h d', h = h, p=2)
+
+        # Fallback to manual implementation
+        # q: b n h d
+        # kv: b n 2 h d
+        k = kv[:, :, 0]
+        v = kv[:, :, 1]
+        
+        # SDPA expects (batch, heads, seq_len, dim)
+        q_t = q.transpose(1, 2)
+        k_t = k.transpose(1, 2)
+        v_t = v.transpose(1, 2)
+        
+        # Manual implementation to ensure backward pass works
+        scale = self.scale
+        sim = torch.matmul(q_t, k_t.transpose(-2, -1)) * scale
+        attn = sim.softmax(dim=-1)
+        out = torch.matmul(attn, v_t)
+        
+        # Transpose back to (batch, seq_len, heads, dim)
+        out = out.transpose(1, 2)
 
         return self.to_out(rearrange(out, 'b n h d -> b n (h d)'))
 
