@@ -18,3 +18,8 @@ extensions
 *.nii.gz
 *.pth
 *.ckpt
+*.err
+*.out
+*.json
+*.txt
+!总纲.txt
