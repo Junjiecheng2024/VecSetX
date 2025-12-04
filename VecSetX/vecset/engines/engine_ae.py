@@ -175,17 +175,30 @@ def evaluate(data_loader, model, device):
             outputs = model(surface, points_all)
             output = outputs['o']
 
-            loss_vol = criterion(output[:, :1024], labels[:, :1024])
-            loss_near = criterion(output[:, 1024:2048], labels[:, 1024:2048])
-            loss_surface = (output[:, 2048:]).abs().mean()
+            # Validation data only has near_points (1024), not vol_points + near_points (2048)
+            # So we need to handle this difference dynamically
+            num_query_points = points.shape[1]  # Should be 1024 for val, 2048 for train
+            
+            if num_query_points == 2048:
+                # Training mode: split into vol and near
+                loss_vol = criterion(output[:, :1024], labels[:, :1024])
+                loss_near = criterion(output[:, 1024:2048], labels[:, 1024:2048])
+                loss_surface = (output[:, 2048:]).abs().mean()
+                
+                vol_iou = calc_iou(output[:, :1024], labels[:, :1024], 0)
+                near_iou = calc_iou(output[:, 1024:2048], labels[:, 1024:2048], 0)
+            else:
+                # Validation mode: only near points (1024)
+                loss_vol = torch.tensor(0.0).to(device)  # No vol points in validation
+                loss_near = criterion(output[:, :1024], labels[:, :1024])
+                loss_surface = (output[:, 1024:]).abs().mean()
+                
+                vol_iou = torch.tensor(0.0).to(device)  # No vol points in validation
+                near_iou = calc_iou(output[:, :1024], labels[:, :1024], 0)
             
             # Note: We skip eikonal loss in validation as it requires gradients
             
             loss = loss_vol + 10 * loss_near + 1 * loss_surface
-
-        threshold = 0
-        vol_iou = calc_iou(output[:, :1024], labels[:, :1024], threshold)
-        near_iou = calc_iou(output[:, 1024:2048], labels[:, 1024:2048], threshold)
 
         batch_size = points.shape[0]
         metric_logger.update(loss=loss.item())
