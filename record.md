@@ -152,3 +152,204 @@
     1.  `IndentationError` in `models/utils.py`: 工具编辑导致缩进错误。
     2.  `NameError: name 'epoch' is not defined` in `utils/misc.py`: 工具编辑导致文件内容错乱，函数定义被覆盖。
 *   **修复**: 完全重写并恢复了 `vecset/models/utils.py` 和 `vecset/utils/misc.py` 的正确内容，确保语法正确且逻辑完整。
+
+---
+
+## 8. 正式训练环境部署与调试 (Production Deployment & Debugging) [NEW - Dec 4, 2025]
+
+在 4x NVIDIA A100 集群上进行单卡测试时，遇到并解决了一系列 PyTorch 兼容性、数据加载、验证逻辑和训练优化问题。
+
+### 8.1 PyTorch 版本兼容性问题
+
+#### 问题: `ModuleNotFoundError: No module named 'torch._six'`
+*   **现象**: 训练脚本启动失败，`utils/misc.py` 无法导入 `torch._six.inf`
+*   **原因**: `torch._six` 是 PyTorch 旧版本的内部模块，在新版本中已被移除
+*   **影响**: 阻止训练启动
+*   **修复**: 
+    *   在 `vecset/utils/misc.py` 中添加 `import math`
+    *   将 `from torch._six import inf` 替换为 `inf = math.inf`
+    *   使用标准库的 `math.inf` 代替 PyTorch 内部实现
+
+### 8.2 验证数据加载器缺失
+
+#### 问题: `NameError: name 'data_loader_val' is not defined`
+*   **现象**: 训练正常运行，但验证阶段报错，提示 `data_loader_val` 未定义
+*   **原因**: `main_ae.py` 中只创建了 `data_loader_train`，遗漏了 `data_loader_val` 的创建
+*   **影响**: 无法进行验证，无法监控模型泛化性能
+*   **修复**: 
+    *   在 `main_ae.py` 第 173-180 行添加 `data_loader_val` 的创建
+    *   配置与 `data_loader_train` 相同，但 `drop_last=False` 以保留所有验证样本
+
+### 8.3 验证集维度不匹配
+
+#### 问题: `RuntimeError: The size of tensor a (1024) must match the size of tensor b (0)`
+*   **现象**: 验证时尝试访问 `labels[:, 1024:2048]` 导致索引越界
+*   **根本原因**: 训练集和验证集的数据格式不一致
+    *   **训练集**: `points = vol_points + near_points` → 2048 个查询点 (1024+1024)
+    *   **验证集**: `points = near_points` → 1024 个查询点
+*   **代码位置**: `utils/objaverse.py` 第 130-142 行根据 `split` 使用不同的点云组合策略
+*   **影响**: 验证阶段崩溃，无法计算 IoU
+*   **修复**: 
+    *   修改 `engines/engine_ae.py` 的 `evaluate` 函数
+    *   动态检测点云大小 (`num_query_points = points.shape[1]`)
+    *   根据点数切换损失计算策略：
+        *   2048 点（训练模式）: 分别计算 vol 和 near 的 loss 和 IoU
+        *   1024 点（验证模式）: 只计算 near 的 loss 和 IoU，vol 设为 0
+
+### 8.4 学习率与 Warmup 配置问题
+
+#### 问题: 训练 10 个 Epoch 后 IoU 仍然为 0，损失几乎不下降
+*   **现象**: 
+    *   Epoch 0: loss=987.8, IoU=0.000
+    *   Epoch 10: loss=982.7, IoU=0.000 (仅下降 5.1)
+*   **分析**: 
+    *   原配置: `blr=1e-4`, `warmup_epochs=40`
+    *   Epoch 10 时学习率 = `1e-4 × 64/256 × (10/40) = 6.25e-6`
+    *   学习率过低，模型权重更新极慢
+*   **影响**: 模型无法有效学习，浪费训练时间
+*   **解决方案**: 
+    *   **方案 1 (已采用)**: 缩短 warmup，`warmup_epochs: 40 → 10`
+    *   **方案 2 (已采用)**: 提高基础学习率，`blr: 1e-4 → 4e-4`
+    *   修改 `run_phase1_test.sh` 和 `run_phase1_sbatch.sh`
+*   **验证**: Epoch 10 时学习率应达到 1e-4
+
+### 8.5 IoU 为 0 的根本原因与 Loss 权重调整
+
+#### 深度分析: 为什么 IoU 始终为 0？
+
+**现象**:
+```
+Epoch 10 (新配置):
+  loss: 907.3
+  loss_near: 81.7 (下降了 8 点)
+  loss_surface: 8.04 (暴涨 8000 倍！)
+  IoU: 0.000 (仍然为 0)
+```
+
+**IoU 计算逻辑**:
+```python
+pred = (output >= 0).float()  # 二值化，threshold=0
+target = (labels >= 0).float()
+iou = intersection / union
+```
+
+**根本原因**: 模型系统性地预测所有 SDF 值为负数
+*   模型输出 `output < 0` 对所有点成立
+*   导致 `pred` 全为 0 (没有任何点被预测为表面或外部)
+*   `target` 有 0 和 1 (真实数据有内部和外部点)
+*   `intersection = 0` → **IoU = 0**
+
+**为什么会系统性偏负？Loss 权重分析**:
+
+原始 Loss 函数:
+```python
+loss = loss_vol + 10 * loss_near + 0.001 * loss_eikonal + 1 * loss_surface
+```
+
+各项实际贡献:
+*   `loss_vol × 1 = 81.9 × 1 = 81.9`
+*   `loss_near × 10 = 81.7 × 10 = 817` ⭐ (主导项)
+*   `loss_eikonal × 0.001 = 0.998 × 0.001 ≈ 0.001`
+*   `loss_surface × 1 = 8.04 × 1 = 8.04` ⚠️ (被忽视)
+
+**问题**: 
+*   模型优化主要受 `loss_near` 驱动 (贡献 817/907 ≈ 90%)
+*   `loss_surface` 的贡献仅 8/907 ≈ 0.9%，几乎被忽略
+*   模型学习到: "只要预测值接近真实 SDF 值，loss 就低"
+*   但忽略了: "表面点的 SDF 必须为 0" 的硬约束
+*   结果: 模型预测系统性偏移（都偏负），导致二值化后完全错误
+
+#### 解决方案: 增加 loss_surface 权重
+
+**修改**:
+```python
+# vecset/engines/engine_ae.py
+# 训练 loss (第 97 行)
+loss = loss_vol + 10 * loss_near + 0.001 * loss_eikonal + 10 * loss_surface
+#                                                           ↑ 1 → 10
+
+# 验证 loss (第 201 行)
+loss = loss_vol + 10 * loss_near + 10 * loss_surface
+#                                   ↑ 1 → 10
+```
+
+**原理**:
+*   强制表面点的 SDF 接近 0
+*   防止系统性偏移
+*   平衡 loss_near 和 loss_surface 的重要性
+
+**预期效果**:
+*   Epoch 5: `loss_surface < 2`, `IoU > 0`
+*   Epoch 10: `loss_surface < 1`, `IoU > 0.1`
+*   Epoch 20-30: `loss_surface < 0.5`, `IoU > 0.3`
+
+### 8.6 VecSetX 架构理解与泛化能力
+
+#### 架构核心: Encoder-Decoder AutoEncoder
+
+**完整流程**:
+```python
+# 输入: 表面点云
+surface_points: (Batch, 8192, 13)  # 8192点, 3D坐标 + 10类one-hot
+
+# Encoder: 动态生成 latent set
+latent_set = encoder(surface_points)  # (Batch, 16, 1024)
+# 16 个可学习的 latent vectors，每个 1024 维
+
+# Decoder: 隐式神经场
+query_points: (Batch, 2048, 3)  # vol_points + near_points
+sdf_predictions = decoder(latent_set, query_points)  # (Batch, 2048)
+```
+
+**关键设计**: 16 个 Latent Vectors
+*   通过 **Set Transformer** 中的 cross-attention 动态生成
+*   16 个 "query seeds" 从 8192 个表面点中聚合信息
+*   类比: 16 个专家分别关注不同的局部特征或全局关系
+*   对心脏多类重建: 足够表达 10 个复杂解剖结构
+
+**泛化机制**:
+*   ✅ Encoder 是可学习的神经网络，不是 per-shape latent code (查表)
+*   ✅ 验证集样本通过 Encoder 动态生成 latent set
+*   ✅ 测试 Encoder 从未见过的点云中提取形状特征的能力
+*   ✅ 这就是 AutoEncoder 的价值: 学习数据分布的压缩表示并泛化
+
+### 8.7 数据集划分策略 (998 个样本)
+
+**当前划分** (推荐):
+*   训练集: ~798 样本 (80%)
+*   验证集: ~200 样本 (20%)
+
+**理由**:
+1.  **科学验证**: 监控过拟合，评估泛化能力
+2.  **Early Stopping**: 根据验证 IoU 保存最佳模型
+3.  **为 Phase 2-4 保留基准**: 验证集可作为后续阶段的已知数据基准
+4.  **符合医学 AI 规范**: 独立验证集是论文发表的必要条件
+5.  **数据量充足**: 798 个 3D 医学样本足以训练深度模型
+
+**替代方案**: K-Fold 交叉验证 (如果需要更准确的评估)
+
+### 8.8 训练指标解读
+
+**核心指标优先级**:
+1.  **IoU (验证集)**: 最重要，直接反映临床可用性 (目标: >0.5)
+2.  **loss_near**: 近表面精度，权重最高 (应持续下降)
+3.  **loss_surface**: 表面约束，影响 IoU (应下降到 <0.5)
+4.  **loss_eikonal**: 梯度正则，保持训练稳定 (应 ≈1.0)
+
+**监控策略**:
+*   每 5 个 Epoch 验证一次
+*   关注验证集 IoU 是否上升
+*   对比训练/验证 loss，检测过拟合
+
+### 8.9 下一步行动
+
+**立即操作**:
+1.  ✅ 删除旧 checkpoint: `rm output/ae/phase1_production/checkpoint-*.pth`
+2.  ✅ 重新启动训练: `bash run_phase1_test.sh` 或 `sbatch run_phase1_sbatch.sh`
+3.  ✅ 监控 Epoch 5, 10, 20 的 IoU 和 loss_surface
+
+**预期里程碑**:
+*   **Epoch 5**: IoU > 0, loss_surface < 2
+*   **Epoch 10**: IoU > 0.1, loss_surface < 1
+*   **Epoch 30**: IoU > 0.3, loss_surface < 0.5
+*   **Epoch 100+**: IoU > 0.5, 达到临床可用标准

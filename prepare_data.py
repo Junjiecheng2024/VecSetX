@@ -113,7 +113,6 @@ def process_file(file_path, args):
         # Combine all meshes for SDF calculation
         combined_verts = []
         combined_faces = []
-        combined_normals = []
         vertex_offset = 0
         
         for c, mesh in meshes.items():
@@ -124,35 +123,42 @@ def process_file(file_path, args):
             
             combined_verts.append(v)
             combined_faces.append(mesh.faces + vertex_offset)
-            # We need vertex normals for sign approximation
-            combined_normals.append(mesh.vertex_normals)
             vertex_offset += len(v)
             
         all_verts = np.concatenate(combined_verts)
-        all_normals = np.concatenate(combined_normals)
+        all_faces = np.concatenate(combined_faces)
         
-        # Build KDTree on vertices (faster than surface points if mesh is dense enough, or use surface points if we have normals for them)
-        # Marching cubes vertices are good.
-        tree = cKDTree(all_verts)
+        # Create combined mesh for accurate SDF computation
+        combined_mesh = trimesh.Trimesh(vertices=all_verts, faces=all_faces)
         
-        def compute_approx_sdf(query_points):
-            dists, idxs = tree.query(query_points)
-            nearest_normals = all_normals[idxs]
-            # Vector from surface to query
-            vec = query_points - all_verts[idxs]
-            # Sign: dot product
-            # If dot > 0, outside (assuming normals point out). 
-            signs = np.sign(np.sum(vec * nearest_normals, axis=1))
-            # Fix sign for points exactly on surface (dist=0)
-            signs[dists < 1e-6] = 1
-            return dists * signs
+        def compute_sdf(query_points):
+            """
+            Compute signed distance function using trimesh's robust methods
+            Positive: outside, Negative: inside
+            """
+            # Get closest point on surface and distance
+            closest_points, distances, _ = combined_mesh.nearest.on_surface(query_points)
+            
+            # Determine if points are inside or outside using ray casting
+            # trimesh.contains() is more robust than normal-based methods
+            is_inside = combined_mesh.contains(query_points)
+            
+            # Sign convention: negative inside, positive outside
+            signs = np.where(is_inside, -1.0, 1.0)
+            
+            # Compute signed distances
+            sdf = distances * signs
+            
+            return sdf.astype(np.float32)
 
         # For volume points
-        vol_sdf = compute_approx_sdf(vol_points)
+        vol_sdf = compute_sdf(vol_points)
         
-        # Sample near surface
-        near_points = surface_points + np.random.normal(0, 0.01, surface_points.shape)
-        near_sdf = compute_approx_sdf(near_points)
+        # Sample near surface points with small noise
+        near_points = surface_points + np.random.normal(0, 0.01, surface_points.shape).astype(np.float32)
+        # Clip to [-1, 1] to ensure valid range
+        near_points = np.clip(near_points, -1, 1)
+        near_sdf = compute_sdf(near_points)
         
         # Reshape SDF
         vol_sdf = vol_sdf.reshape(-1, 1)
