@@ -16,3 +16,5 @@ extensions
 *.pdf
 *.npz
 *.nii.gz
+*.pth
+*.ckpt
