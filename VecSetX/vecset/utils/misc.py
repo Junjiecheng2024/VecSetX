@@ -1,3 +1,22 @@
+# Copyright (c) 2025, Biao Zhang.
+
+import builtins
+import datetime
+import math
+import os
+import time
+from collections import defaultdict, deque
+from pathlib import Path
+
+import torch
+import torch.distributed as dist
+
+inf = math.inf
+
+class SmoothedValue(object):
+    """Track a series of values and provide access to smoothed values over a
+    window or the global series average.
+    """
 
     def __init__(self, window_size=20, fmt=None):
         if fmt is None:
