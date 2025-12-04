@@ -101,7 +101,7 @@ CPU count	128
 Logical CPU count	256
 GPU count	4
 GPU type	NVIDIA A100-SXM4-40GB
-Python version 3.10.14
+Python version 3.12
 OS Linux-4.18.0-553.74.1.el8_10.x86_64-x86_64-with-glibc2.28
 MEM: 480Gi
 
