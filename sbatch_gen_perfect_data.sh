@@ -1,19 +1,20 @@
 #!/bin/bash
-#SBATCH --job-name=gen_perfect_data
-#SBATCH --account=project_2016517
-#SBATCH --partition=small
-#SBATCH --time=12:00:00
+#SBATCH -A project_2016526
+#SBATCH --job-name=vecset_data_gen
 #SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
-#SBATCH --output=logs/gen_perfect_data_%j.out
-#SBATCH --error=logs/gen_perfect_data_%j.err
+#SBATCH --ntasks-per-node=4
+#SBATCH -p gpumedium
+#SBATCH --gres=gpu:a100:4
+#SBATCH --cpus-per-task=32
+#SBATCH --time=36:00:00
+#SBATCH --output=logs/%j.out
+#SBATCH --error=logs/%j.err
+#SBATCH -J vecset_data_gen
 
 # Create logs directory
 mkdir -p logs
 
-# Activate environment
+module load python-data/3.12-25.09
 source /projappl/project_2016517/JunjieCheng/junjieenv/bin/activate
 
 echo "========================================================================"
@@ -65,8 +66,8 @@ for start in 0 100 200 300 400 500 600 700 800 900; do
     python $SCRIPT \
         --input_dir $INPUT_DIR \
         --output_dir $OUTPUT_DIR \
-        --num_surface_points 50000 \
-        --num_vol_points 50000 \
+        --num_surface_points 100000 \
+        --num_vol_points 100000 \
         --classes 10 \
         --batch_size 5000 \
         --start_idx $start \
