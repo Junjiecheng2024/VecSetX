@@ -14,7 +14,7 @@
 # Load necessary modules (if any)
 # module load cuda/11.8  # Example, adjust based on cluster
 
-module load python-data/3.10-24.04
+module load python-data/3.12-25.09
 source /projappl/project_2016517/JunjieCheng/junjieenv/bin/activate
 
 export PYTHONPATH=$PYTHONPATH:$(pwd)
