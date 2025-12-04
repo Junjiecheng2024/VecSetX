@@ -184,3 +184,55 @@ iou
 ✅ loss_eikonal ≈ 1.0 (当前: 0.9994) ✓ 正常
 ✅ max mem < 40000 MB ✓ 显存充足
 ✅ time 稳定 ✓ 没有内存泄漏
+
+
+VecSetX 的工作流程
+训练时（训练集样本）
+
+# 1. 输入: 表面点云 (8192 × 13)
+surface = sample_1_surface_points  # shape: (8192, 13)
+
+# 2. Encoder: 点云 → latent set
+latent_set = encoder(surface)  # shape: (16, 1024)
+# 这 16 个向量是动态生成的，不是预存的！
+
+# 3. Decoder: latent set + 查询点 → SDF
+query_points = [vol_points + near_points]  # shape: (2048, 3)
+sdf_pred = decoder(latent_set, query_points)  # shape: (2048,)
+
+# 4. 计算 loss
+loss = L1(sdf_pred, sdf_true)
+
+# 5. 反向传播更新 Encoder 和 Decoder 的参数
+optimizer.step()
+验证时（验证集样本）
+
+# 完全相同的流程！
+surface = val_sample_surface_points  # 新样本
+
+latent_set = encoder(surface)  # ← Encoder 可以处理新样本！
+sdf_pred = decoder(latent_set, query_points)
+iou = calc_iou(sdf_pred, sdf_true)
+关键：Encoder 是一个可泛化的神经网络，不是查表操作！
+
+
+完整的形状维度
+
+# 输入
+surface_points: (Batch, 8192, 13)
+               # 8192 个点，每个点 3D 坐标 + 10 类 one-hot
+
+# Encoder 输出
+latent_set: (Batch, 16, 1024)
+           # 16 个 latent vectors，每个 1024 维
+
+# Decoder 输入
+query_points: (Batch, 2048, 3)
+             # 2048 个查询点 (vol + near)
+latent_set: (Batch, 16, 1024)  # 重复使用
+
+# Decoder 输出
+sdf_predictions: (Batch, 2048)
+                # 2048 个 SDF 值
+
+用 16 个专家的 1024 维报告 来总结一个心脏的完整形状

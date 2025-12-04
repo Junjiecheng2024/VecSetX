@@ -26,4 +26,6 @@ torchrun --nproc_per_node=1 --master_port=29500 VecSetX/vecset/main_ae.py \
     --data_path /scratch/project_2016517/junjie/dataset/repaired_npz \
     --output_dir output/ae/phase1_production \
     --log_dir output/ae/phase1_production \
+    --blr 4e-4 \
+    --warmup_epochs 10 \
     --wandb

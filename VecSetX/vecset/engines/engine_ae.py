@@ -94,7 +94,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 # loss_surface_normal = F.l1_loss(F.normalize(grad[:, 2048:], dim=2), surface_normals)
                 # loss_surface_normal = 1 - torch.einsum('b n c, b n c -> b n', (F.normalize(grad[:, 2048:], dim=2, eps=1e-6), surface_normals)).mean()
 
-                loss = loss_vol + 10 * loss_near + 0.001 * loss_eikonal + 1 * loss_surface# + 0.01 * loss_surface_normal
+                loss = loss_vol + 10 * loss_near + 0.001 * loss_eikonal + 10 * loss_surface# + 0.01 * loss_surface_normal
 
 
         loss_value = loss.item()
@@ -198,7 +198,7 @@ def evaluate(data_loader, model, device):
             
             # Note: We skip eikonal loss in validation as it requires gradients
             
-            loss = loss_vol + 10 * loss_near + 1 * loss_surface
+            loss = loss_vol + 10 * loss_near + 10 * loss_surface
 
         batch_size = points.shape[0]
         metric_logger.update(loss=loss.item())
