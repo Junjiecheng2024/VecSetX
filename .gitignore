@@ -23,3 +23,5 @@ extensions
 *.json
 *.txt
 !总纲.txt
+*.png
+*.jpg

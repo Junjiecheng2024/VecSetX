@@ -7,14 +7,17 @@ import trimesh
 import torch
 from skimage import measure
 from scipy.spatial import cKDTree
+import gc  # For garbage collection
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Convert .nii.gz masks to .npz for VecSetX")
+    parser = argparse.ArgumentParser(description="Convert .nii.gz masks to .npz for VecSetX (Batch Processing)")
     parser.add_argument("--input_dir", type=str, required=True, help="Directory containing .nii.gz files")
     parser.add_argument("--output_dir", type=str, required=True, help="Directory to save .npz files")
     parser.add_argument("--num_surface_points", type=int, default=100000, help="Total number of surface points to sample")
     parser.add_argument("--num_vol_points", type=int, default=100000, help="Total number of volume points to sample")
     parser.add_argument("--classes", type=int, default=10, help="Number of classes")
+    parser.add_argument("--start_idx", type=int, default=0, help="Start index (for resuming)")
+    parser.add_argument("--end_idx", type=int, default=None, help="End index (None = all files)")
     return parser.parse_args()
 
 def process_file(file_path, args):
@@ -23,16 +26,9 @@ def process_file(file_path, args):
         img = nib.load(file_path)
         data = img.get_fdata()
         
-        # Normalize spacing if needed (assuming isotropic for now or handling via affine)
-        # For simplicity in this script, we work in voxel coordinates and then apply affine if needed.
-        # However, VecSetX usually expects normalized coordinates [-1, 1].
-        
         # 1. Extract Surface Points and Labels
         surface_points_list = []
         surface_labels_list = []
-        
-        # We need to handle each class (1 to 10)
-        # Assuming labels are 1-based indices in the mask
         
         total_surface_area = 0
         meshes = {}
@@ -45,10 +41,6 @@ def process_file(file_path, args):
             # Marching Cubes to get mesh
             try:
                 verts, faces, _, _ = measure.marching_cubes(mask, level=0.5)
-                # Apply affine to get real world coordinates
-                # verts = nib.affines.apply_affine(img.affine, verts) 
-                # For now, let's stick to voxel coordinates and normalize later to keep it simple and robust
-                
                 mesh = trimesh.Trimesh(vertices=verts, faces=faces)
                 meshes[c] = mesh
                 total_surface_area += mesh.area
@@ -70,7 +62,7 @@ def process_file(file_path, args):
             
             # Create one-hot label
             label = np.zeros((n_samples, args.classes), dtype=np.float32)
-            label[:, c-1] = 1.0 # 0-indexed for one-hot
+            label[:, c-1] = 1.0
             surface_labels_list.append(label)
             
         if not surface_points_list:
@@ -80,21 +72,6 @@ def process_file(file_path, args):
         surface_labels = np.concatenate(surface_labels_list, axis=0)
         
         # Normalize surface points to [-1, 1]
-        # Center and scale
-        min_bound = surface_points.min(axis=0)
-        max_bound = surface_points.max(axis=0)
-        center = (min_bound + max_bound) / 2
-        scale = (max_bound - min_bound).max()
-        
-        surface_points = (surface_points - center) / (scale / 2) # Scale to [-1, 1] range roughly
-        # Actually VecSetX normalization: 
-        # shifts = (surface.max(axis=0) + surface.min(axis=0)) / 2
-        # surface = surface - shifts
-        # distances = np.linalg.norm(surface, axis=1)
-        # scale = 1 / np.max(distances)
-        # surface *= scale
-        
-        # Let's use the logic from infer.py to be consistent
         shifts = (surface_points.max(axis=0) + surface_points.min(axis=0)) / 2
         surface_points = surface_points - shifts
         distances = np.linalg.norm(surface_points, axis=1)
@@ -106,8 +83,6 @@ def process_file(file_path, args):
             scale_factor = 1.0
 
         # 2. Generate Volume Points and SDF
-        # We need points in the volume [-1, 1]
-        
         vol_points = np.random.uniform(-1, 1, (args.num_vol_points, 3)).astype(np.float32)
         
         # Combine all meshes for SDF calculation
@@ -117,7 +92,6 @@ def process_file(file_path, args):
         
         for c, mesh in meshes.items():
             v = mesh.vertices
-            # Normalize vertices same as points
             v = v - shifts
             v *= scale_factor
             
@@ -128,59 +102,40 @@ def process_file(file_path, args):
         all_verts = np.concatenate(combined_verts)
         all_faces = np.concatenate(combined_faces)
         
-        # Create combined mesh for accurate SDF computation
+        # Create combined mesh
         combined_mesh = trimesh.Trimesh(vertices=all_verts, faces=all_faces)
         
         def compute_sdf(query_points):
-            """
-            Compute signed distance function
-            Positive: outside, Negative: inside
-            Uses winding number method (no rtree required)
-            """
             # Get closest point on surface and distance
             closest_points, distances, _ = combined_mesh.nearest.on_surface(query_points)
             
             # Determine if points are inside or outside
-            # Try trimesh.contains first (requires rtree)
-            # Fallback to computing winding number if rtree not available
             try:
                 is_inside = combined_mesh.contains(query_points)
             except:
-                # Fallback: use proximity to determine inside/outside
-                # If a point is very close to a mesh vertex, check the vertex normal direction
-                from scipy.spatial import cKDTree
+                # Fallback
                 tree = cKDTree(combined_mesh.vertices)
                 dists_to_verts, idxs = tree.query(query_points, k=3)
                 
-                # Use average normal direction of 3 nearest vertices
                 nearest_normals = combined_mesh.vertex_normals[idxs]
                 avg_normals = nearest_normals.mean(axis=1)
                 
-                # Vector from nearest point to query
                 vec_to_query = query_points - closest_points
-                
-                # If dot product is negative, likely inside
                 dot_products = np.sum(vec_to_query * avg_normals, axis=1)
                 is_inside = dot_products < 0
             
-            # Sign convention: negative inside, positive outside
             signs = np.where(is_inside, -1.0, 1.0)
-            
-            # Compute signed distances
             sdf = distances * signs
             
             return sdf.astype(np.float32)
 
-        # For volume points
+        # Compute SDF
         vol_sdf = compute_sdf(vol_points)
         
-        # Sample near surface points with small noise
         near_points = surface_points + np.random.normal(0, 0.01, surface_points.shape).astype(np.float32)
-        # Clip to [-1, 1] to ensure valid range
         near_points = np.clip(near_points, -1, 1)
         near_sdf = compute_sdf(near_points)
         
-        # Reshape SDF
         vol_sdf = vol_sdf.reshape(-1, 1)
         near_sdf = near_sdf.reshape(-1, 1)
         
@@ -196,20 +151,40 @@ def process_file(file_path, args):
                  near_points=near_points.astype(np.float32),
                  near_sdf=near_sdf.astype(np.float32))
         
-        print(f"Saved {save_path}")
+        print(f"✓ Saved {filename}")
+        
+        # Explicitly free memory
+        del combined_mesh, meshes, surface_points, vol_points, near_points
+        del vol_sdf, near_sdf, all_verts, all_faces
+        gc.collect()
 
     except Exception as e:
-        print(f"Failed to process {file_path}: {e}")
+        print(f"✗ Failed to process {file_path}: {e}")
 
 def main():
     args = get_args()
     os.makedirs(args.output_dir, exist_ok=True)
     
-    files = glob.glob(os.path.join(args.input_dir, "*.nii.gz"))
+    files = sorted(glob.glob(os.path.join(args.input_dir, "*.nii.gz")))
     print(f"Found {len(files)} files.")
     
-    for f in files:
+    # Apply start and end index
+    start = args.start_idx
+    end = args.end_idx if args.end_idx is not None else len(files)
+    files = files[start:end]
+    
+    print(f"Processing files {start} to {end-1} ({len(files)} files)")
+    
+    for i, f in enumerate(files):
+        print(f"\n[{start + i + 1}/{end}] Processing: {os.path.basename(f)}")
         process_file(f, args)
+        
+        # Force garbage collection every 10 files
+        if (i + 1) % 10 == 0:
+            gc.collect()
+            print(f"  → Processed {i + 1}/{len(files)} files, memory freed")
+
+    print(f"\n✅ Completed processing {len(files)} files!")
 
 if __name__ == "__main__":
     main()
