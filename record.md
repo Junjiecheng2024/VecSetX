@@ -136,3 +136,19 @@
     2.  **手动 Attention**: 为了规避 SDPA 反向传播错误，手动实现的 Attention 需要显式存储巨大的注意力矩阵 (Batch=2, Heads=16, Q=1024/8192, K=16384/1024)，占用数 GB 显存。
     3.  **模型规模**: 4.25亿参数的模型本身及其优化器状态占用约 7GB。
 *   **结论**: 当前配置 (Batch Size 2, Accum Iter 32) 是 A100 (40GB) 上的安全运行阈值。
+
+### 7.8 训练早停与验证缺失 (Early Stopping & Missing Validation)
+*   **问题**: 训练在 Epoch 40 停止，且没有输出验证日志。
+*   **原因**: 
+    1.  **静默崩溃 (Silent Crash)**: 验证阶段或模型保存阶段发生错误，但由于缺乏异常捕获机制，进程直接退出。
+    2.  **磁盘空间耗尽**: 随后发现报错 `RuntimeError: PytorchStreamWriter failed writing file data/868: file write failed`，确认为磁盘空间不足。
+*   **修复**:
+    *   **增强鲁棒性**: 在 `main_ae.py` 中为验证逻辑添加 `try-except` 块和详细 Debug 打印。
+    *   **优化 Checkpoint 策略**: 修改 `utils/misc.py` 和 `main_ae.py`，不再每 5 个 Epoch 保存一次全量模型，改为只保存 `checkpoint-last.pth` (每 Epoch 更新) 和 `checkpoint-best.pth` (仅当 IoU 提升时更新)。
+    *   **清理空间**: 建议用户删除旧的 Checkpoint 文件。
+
+### 7.9 代码损坏修复 (Code Corruption Repair)
+*   **问题**: 
+    1.  `IndentationError` in `models/utils.py`: 工具编辑导致缩进错误。
+    2.  `NameError: name 'epoch' is not defined` in `utils/misc.py`: 工具编辑导致文件内容错乱，函数定义被覆盖。
+*   **修复**: 完全重写并恢复了 `vecset/models/utils.py` 和 `vecset/utils/misc.py` 的正确内容，确保语法正确且逻辑完整。

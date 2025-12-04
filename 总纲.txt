@@ -1,3 +1,5 @@
+我们现在正在做心脏结构的重建任务，利用VecSetX模型进行心脏结构的重建。以下为详细行动计划：
+
 行动计划（Action Plan）
 
 阶段 1：基础模型训练（多类重建）
@@ -64,7 +66,7 @@
 ---------------------------------------------------------------------------------
 当前状态
 数据修复已完成，且具有完整 10 类 mask，因此可直接开始阶段 1（多类重建的 VecSetX 训练）。
-数据集路径：/home/user/persistent/vecset/repaired_shape
+
 各类别：
 1 : Myocardium : The muscle tissue surrounding the left ventricle blood pool
 2 : LA : The left atrium blood pool
@@ -94,7 +96,7 @@ Objaverse 数据集加载器需要 CSV 文件来索引训练和验证数据。
 python create_csv.py
 
 
-训练环境：
+正式训练环境：
 CPU count	128
 Logical CPU count	256
 GPU count	4
@@ -109,7 +111,8 @@ MEM: 480Gi
 体素数据集：
 /scratch/project_2016517/junjie/dataset/repaired_shape
 
-点云数据集：
+点云数据集：（训练用数据集）
 /scratch/project_2016517/junjie/dataset/repaired_npz
 
-单卡测试完成。现在运行4卡训练。
+单卡测试进行中。
+待单卡测试完成，运行正式4卡训练。
