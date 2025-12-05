@@ -194,12 +194,12 @@ def plot_sdf_distribution(data_dir, num_samples=5, output_path='sdf_distribution
     plt.close()
 
 if __name__ == '__main__':
-    data_dir = '/home/user/persistent/vecset/data_npz'
+    data_dir = '/scratch/project_2016517/junjie/dataset/repaired_npz'
     
     # 分析数据集
     results = analyze_dataset(data_dir, num_samples=10)
     
     # 绘制分布图
-    plot_sdf_distribution(data_dir, num_samples=5, output_path='/home/user/persistent/vecset/sdf_distribution.png')
+    plot_sdf_distribution(data_dir, num_samples=5, output_path='/projappl/project_2016517/JunjieCheng/VecSetX/sdf_distribution.png')
     
     print(f"\n✅ 数据质量检查完成！")

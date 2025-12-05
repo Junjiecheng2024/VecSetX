@@ -30,4 +30,4 @@ def create_csv(data_dir, output_dir, split_ratio=0.9):
     print(f"Created train.csv with {len(train_files)} files and val.csv with {len(val_files)} files.")
 
 if __name__ == "__main__":
-    create_csv('/home/user/persistent/vecset/data_npz', '/home/user/persistent/vecset/VecSetX/vecset/utils')
+    create_csv('/scratch/project_2016517/junjie/dataset/repaired_npz', '/projappl/project_2016517/JunjieCheng/VecSetX/VecSetX/vecset/utils')
