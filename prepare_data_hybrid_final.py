@@ -28,12 +28,17 @@ def get_args():
                        help="Threshold for vol_sdf (higher=more inside). Try 1.2-1.5 for ~50/50")
     return parser.parse_args()
 
-def compute_vol_sdf_truly_tunable(query_points, mesh_vertices, threshold=1.2, batch_size=5000):
+def compute_vol_sdf_truly_tunable(query_points, mesh_vertices, threshold=0.5, batch_size=5000):
     """
-    FIXED: Single condition that actually responds to threshold
-    threshold > 1.0 → more points considered inside
-    threshold = 1.2 → target ~50/50
-    threshold = 1.5 → target ~40/60 (more outside)
+    CORRECTED: Use depth ratio for inside/outside detection
+    depth_ratio = dist_to_surface / dist_to_center
+    
+    High ratio: surface is far but center is close → INSIDE
+    Low ratio: surface is close but center is far → OUTSIDE
+    
+    threshold = 0.3 → ~25% inside (conservative)
+    threshold = 0.5 → ~50% inside (balanced) ← target
+    threshold = 0.8 → ~75% inside (aggressive)
     """
     n_points = len(query_points)
     all_sdf = np.zeros(n_points, dtype=np.float32)
@@ -45,16 +50,19 @@ def compute_vol_sdf_truly_tunable(query_points, mesh_vertices, threshold=1.2, ba
         end = min(i + batch_size, n_points)
         batch = query_points[i:end]
         
-        # KNN distance to surface
+        # Distance to nearest surface point
         dists, idxs = tree.query(batch, k=1)
         
         # Distance to mesh center
         to_center = batch - mesh_center
         dist_to_center = np.linalg.norm(to_center, axis=1)
         
-        # SINGLE CONDITION: adjustable threshold
-        # If dist_to_center < dist_to_surface * threshold → inside
-        is_inside = dist_to_center < (dists * threshold)
+        # Depth ratio: measures how "deep" inside the mesh
+        # Avoid division by zero
+        depth_ratio = dists / (dist_to_center + 1e-8)
+        
+        # If depth_ratio > threshold → inside (surface far relative to center)
+        is_inside = depth_ratio > threshold
         
         signs = np.where(is_inside, -1.0, 1.0)
         all_sdf[i:end] = dists.astype(np.float32) * signs
