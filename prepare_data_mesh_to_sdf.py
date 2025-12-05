@@ -28,15 +28,22 @@ def get_args():
 
 def compute_sdf_mesh_to_sdf(query_points, mesh):
     """
-    Use mesh_to_sdf library for accurate SDF computation
-    This is much more accurate than heuristic methods
+    Use mesh_to_sdf library for accurate SDF computation (CPU-only, no rendering)
+    This works on headless servers without OpenGL/X11
     """
     if not MESH_TO_SDF_AVAILABLE:
         raise ImportError("mesh_to_sdf is required. Install with: pip install mesh-to-sdf")
     
-    # mesh_to_sdf.mesh_to_sdf expects points and returns SDF values
-    # It handles inside/outside correctly using ray casting
-    sdf_values = mesh_to_sdf.mesh_to_sdf(mesh, query_points)
+    # Use 'depth' method instead of default 'scan' to avoid OpenGL rendering
+    # This is slower but works on headless servers
+    sdf_values = mesh_to_sdf.mesh_to_sdf(
+        mesh, 
+        query_points,
+        surface_point_method='sample',  # Use sampling instead of scanning
+        sign_method='depth',            # Use depth method (no OpenGL needed)
+        scan_count=100,                 # Reasonable quality
+        scan_resolution=400             # Reasonable resolution
+    )
     return sdf_values.astype(np.float32)
 
 def process_file(file_path, args):
