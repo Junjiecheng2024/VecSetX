@@ -25,8 +25,8 @@ def get_args():
     parser.add_argument("--num_vol_points", type=int, default=50000)
     parser.add_argument("--classes", type=int, default=10)
     parser.add_argument("--batch_size", type=int, default=5000)
-    parser.add_argument("--vol_threshold", type=float, default=0.33, 
-                       help="Heuristic threshold (0.33 recommended for proper balance)")
+    parser.add_argument("--vol_threshold", type=float, default=1.2, 
+                       help="Heuristic threshold for vol_sdf. 1.2→~50% pos, 0.8→72% pos, 1.5→35% pos")
     parser.add_argument("--start_idx", type=int, default=0)
     parser.add_argument("--end_idx", type=int, default=None)
     return parser.parse_args()
@@ -59,10 +59,14 @@ def compute_heuristic_sdf(query_points, mesh_vertices, threshold=0.33, batch_siz
         to_center = batch - mesh_center
         dist_to_center = np.linalg.norm(to_center, axis=1)
         
-        # 3. Depth Ratio
+        # 3. Depth Ratio: measures relative position
+        # depth_ratio = dist_to_surface / dist_to_center
+        # High ratio (>threshold): surface far, center close → INSIDE
+        # Low ratio (<threshold): surface close, center far → OUTSIDE
         depth_ratio = dists / (dist_to_center + 1e-8)
         
-        # 4. Sign
+        # 4. Sign determination
+        # threshold=1.2 gives ~50% positive (recommended)
         is_inside = depth_ratio > threshold
         signs = np.where(is_inside, -1.0, 1.0)
         
