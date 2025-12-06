@@ -127,19 +127,12 @@ class Objaverse(data.Dataset):
         vol_points = torch.from_numpy(vol_points)
         vol_sdf = torch.from_numpy(vol_sdf).float()
 
-        if self.split == 'train':
+        if True: # Always return both vol and near points
             near_points = torch.from_numpy(near_points)
             near_sdf = torch.from_numpy(near_sdf).float()
 
             points = torch.cat([vol_points, near_points], dim=0)
             sdf = torch.cat([vol_sdf, near_sdf], dim=0)
-        else:
-
-            near_points = torch.from_numpy(near_points)
-            near_sdf = torch.from_numpy(near_sdf).float()
-
-            points = near_points
-            sdf = near_sdf
 
         if self.transform:
             # Note: transform usually expects (surface, points). 
