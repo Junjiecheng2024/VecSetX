@@ -32,7 +32,7 @@ def get_args():
                        help="Heuristic threshold for vol_sdf inside/outside判断. Lower=more inside. 0.5→~50/50 (recommended)")
     parser.add_argument("--start_idx", type=int, default=0)
     parser.add_argument("--end_idx", type=int, default=None)
-    parser.add_argument("--n_workers", type=int, default=128,
+    parser.add_argument("--n_workers", type=int, default=cpu_count(),
                        help="Number of parallel workers for per-class SDF computation. 0=auto (use all CPUs)")
     return parser.parse_args()
 
