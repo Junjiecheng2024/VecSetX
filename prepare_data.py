@@ -25,8 +25,8 @@ def get_args():
     parser.add_argument("--num_vol_points", type=int, default=50000)
     parser.add_argument("--classes", type=int, default=10)
     parser.add_argument("--batch_size", type=int, default=5000)
-    parser.add_argument("--vol_threshold", type=float, default=1.2, 
-                       help="Heuristic threshold for vol_sdf. 1.2→~50% pos, 0.8→72% pos, 1.5→35% pos")
+    parser.add_argument("--vol_threshold", type=float, default=0.5, 
+                       help="Heuristic threshold for vol_sdf inside/outside判断. Lower=more inside. 0.5→~50/50 (recommended)")
     parser.add_argument("--start_idx", type=int, default=0)
     parser.add_argument("--end_idx", type=int, default=None)
     return parser.parse_args()
