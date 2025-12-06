@@ -34,6 +34,8 @@ def get_args():
     parser.add_argument("--end_idx", type=int, default=None)
     parser.add_argument("--n_workers", type=int, default=cpu_count(),
                        help="Number of parallel workers for per-class SDF computation. 0=auto (use all CPUs)")
+    parser.add_argument("--file_workers", type=int, default=1,
+                       help="Number of files to process in parallel. Set to 4-8 for faster generation on multi-core systems.")
     return parser.parse_args()
 
 # -----------------------------------------------------------------------------
@@ -347,16 +349,34 @@ def main():
     files = files[start:end]
     
     n_workers = args.n_workers if args.n_workers > 0 else cpu_count()
+    file_workers = args.file_workers
     
     print(f"Processing {len(files)} files. Hybrid Final (Multi-Class) OPTIMIZED.")
     print(f"Parallel Workers: {n_workers} (per file)")
+    print(f"File Workers: {file_workers} (parallel files)")
     print(f"Batch Size: {args.batch_size}")
     print("="*60)
     
-    for i, f in enumerate(files):
-        print(f"[{i+1}/{len(files)}] {os.path.basename(f)}")
-        process_file(f, args)
-        if (i+1) % 10 == 0: gc.collect()
+    if file_workers > 1:
+        # Multi-file parallel processing
+        print(f"Using multi-file parallel mode with {file_workers} workers")
+        
+        # Create a partial function with args
+        process_func = partial(process_file, args=args)
+        
+        # Process files in parallel
+        with Pool(processes=file_workers) as pool:
+            for i, result in enumerate(pool.imap_unordered(process_func, files)):
+                if (i+1) % 10 == 0:
+                    print(f"Progress: {i+1}/{len(files)} files completed")
+                    gc.collect()
+    else:
+        # Sequential processing (original behavior)
+        for i, f in enumerate(files):
+            print(f"[{i+1}/{len(files)}] {os.path.basename(f)}")
+            process_file(f, args)
+            if (i+1) % 10 == 0: 
+                gc.collect()
         
     print("Done.")
 
