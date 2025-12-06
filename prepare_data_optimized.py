@@ -179,9 +179,46 @@ def process_file(file_path, args):
         union_mesh = trimesh.Trimesh(vertices=all_v, faces=all_f)
         
         # ---------------------------------------------------------------------
-        # GENERATE POINTS
+        # GENERATE POINTS - STRATIFIED SAMPLING
         # ---------------------------------------------------------------------
-        vol_points = np.random.uniform(-1, 1, (args.num_vol_points, 3)).astype(np.float32)
+        # Background ratio in original data: ~80%
+        # To boost small structure sampling, we use stratified sampling:
+        # - 60% from background (instead of 80%)
+        # - 40% from anatomical structures (union mask)
+        # This gives ~2x higher sampling density for structures
+        
+        # Create union mask (any structure)
+        union_mask = (data > 0)
+        
+        # Get coordinates of background and structure voxels
+        bg_coords = np.argwhere(~union_mask)  # Background
+        struct_coords = np.argwhere(union_mask)  # Any structure
+        
+        # Stratified sampling
+        n_bg = int(args.num_vol_points * 0.6)  # 60% from background
+        n_struct = args.num_vol_points - n_bg  # 40% from structures
+        
+        # Sample from background
+        if len(bg_coords) > 0:
+            bg_indices = np.random.choice(len(bg_coords), min(n_bg, len(bg_coords)), replace=False)
+            bg_samples = bg_coords[bg_indices]
+        else:
+            bg_samples = np.array([]).reshape(0, 3)
+        
+        # Sample from structures
+        if len(struct_coords) > 0:
+            struct_indices = np.random.choice(len(struct_coords), min(n_struct, len(struct_coords)), replace=False)
+            struct_samples = struct_coords[struct_indices]
+        else:
+            struct_samples = np.array([]).reshape(0, 3)
+        
+        # Combine
+        vol_points_voxel = np.vstack([bg_samples, struct_samples])
+        
+        # Normalize to [-1, 1] using the same transform as surface points
+        vol_points = ((vol_points_voxel - shifts) * scale_factor).astype(np.float32)
+        
+        print(f"    Stratified sampling: {len(bg_samples)} bg + {len(struct_samples)} struct = {len(vol_points)} total")
         near_points = surface_points + np.random.normal(0, 0.01, surface_points.shape).astype(np.float32)
         near_points = np.clip(near_points, -1, 1)
 
