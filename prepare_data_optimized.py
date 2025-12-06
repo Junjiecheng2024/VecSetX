@@ -108,19 +108,26 @@ def process_file(file_path, args):
         # 2. Extract Meshes (Class 1..10)
         meshes = {}
         total_surface_area = 0
-        valid = True
+        failed_classes = []
         
         for c in range(1, args.classes + 1):
             mask = (data == c)
             if np.sum(mask) == 0:
+                print(f"    ⚠️ Class {c}: No voxels found")
+                failed_classes.append(c)
                 continue
             try:
                 verts, faces, _, _ = measure.marching_cubes(mask, level=0.5)
                 mesh = trimesh.Trimesh(vertices=verts, faces=faces)
                 meshes[c] = mesh
                 total_surface_area += mesh.area
-            except:
+            except Exception as e:
+                print(f"    ⚠️ Class {c}: Marching cubes failed - {e}")
+                failed_classes.append(c)
                 continue
+        
+        if failed_classes:
+            print(f"    Missing classes: {failed_classes}")
         
         if total_surface_area == 0:
             print("    Error: No surface found")
