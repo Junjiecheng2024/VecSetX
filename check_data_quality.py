@@ -28,15 +28,15 @@ def check_file(npz_path):
             
             # 3. Consistency Check (The "Gold Standard")
             # Logic: If Inside (SDF < 0), should have Label > 0.
-            #        If Outside (SDF > 0), should have Label == 0.
+            #        If Outside (SDF >= 0), should have Label == 0.
             
             # Check 1: Inside points that have Background label (Missed Class?)
-            # SDF < -1e-5 (strictly inside) AND Label == 0
-            inside_but_bg = np.logical_and(vol_sdf < -1e-4, vol_labels == 0).mean()
+            # Use SDF < 0 to match the actual label assignment logic
+            inside_but_bg = np.logical_and(vol_sdf < 0, vol_labels == 0).mean()
             
             # Check 2: Outside points that have Class label (Leaked Label?)
-            # SDF > 1e-5 (strictly outside) AND Label > 0
-            outside_but_cls = np.logical_and(vol_sdf > 1e-4, vol_labels > 0).mean()
+            # Use SDF >= 0 to match the actual label assignment logic
+            outside_but_cls = np.logical_and(vol_sdf >= 0, vol_labels > 0).mean()
             
             consistency = 1.0 - (inside_but_bg + outside_but_cls)
             print(f"  [Consistency] {consistency*100:.2f}%")
