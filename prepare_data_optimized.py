@@ -230,21 +230,34 @@ def process_file(file_path, args):
         # ---------------------------------------------------------------------
         print(f"    Computing Vol SDF (Parallel, {len(scaled_meshes)} classes)...")
         
-        # Prepare arguments for parallel processing
+        # CRITICAL: When file_workers > 1, we can't use Pool inside Pool (daemon issue)
+        # So we check if n_workers should be disabled
         n_workers = args.n_workers if args.n_workers > 0 else cpu_count()
-        tasks = [
-            (vol_points, verts, args.vol_threshold, c-1)
-            for c, verts in scaled_meshes.items()
-        ]
         
-        # Parallel computation
-        vol_sdf_all = np.full((len(vol_points), args.classes), 99.0, dtype=np.float32)
+        # If this is being called from a parallel file worker, disable internal parallelization
+        use_parallel = (n_workers > 1) and (args.file_workers <= 1)
         
-        with Pool(processes=min(n_workers, len(tasks))) as pool:
-            results = pool.map(compute_sdf_for_class, tasks)
-        
-        for class_idx, sdf in results:
-            vol_sdf_all[:, class_idx] = sdf
+        if use_parallel:
+            # Prepare arguments for parallel processing
+            tasks = [
+                (vol_points, verts, args.vol_threshold, c-1)
+                for c, verts in scaled_meshes.items()
+            ]
+            
+            # Parallel computation
+            vol_sdf_all = np.full((len(vol_points), args.classes), 99.0, dtype=np.float32)
+            
+            with Pool(processes=min(n_workers, len(tasks))) as pool:
+                results = pool.map(compute_sdf_for_class, tasks)
+            
+            for class_idx, sdf in results:
+                vol_sdf_all[:, class_idx] = sdf
+        else:
+            # Sequential computation (when file_workers > 1 or n_workers == 1)
+            vol_sdf_all = np.full((len(vol_points), args.classes), 99.0, dtype=np.float32)
+            for c, verts in scaled_meshes.items():
+                sdf = compute_heuristic_sdf_single_batch(vol_points, verts, args.vol_threshold)
+                vol_sdf_all[:, c-1] = sdf
         
         # Combine: Union SDF is minimum across all classes
         vol_sdf = np.min(vol_sdf_all, axis=1)
@@ -269,20 +282,28 @@ def process_file(file_path, args):
         # A. Geometry (High Quality)
         near_sdf_union = compute_high_quality_sdf(near_points, union_mesh)
         
-        # B. Semantics (Heuristic Check) - PARALLEL
-        print(f"    Computing Near Labels (Parallel)...")
-        tasks_near = [
-            (near_points, verts, args.vol_threshold, c-1)
-            for c, verts in scaled_meshes.items()
-        ]
+        # B. Semantics (Heuristic Check) - PARALLEL (if allowed)
+        print(f"    Computing Near Labels...")
         
-        near_sdf_heur_all = np.full((len(near_points), args.classes), 99.0, dtype=np.float32)
-        
-        with Pool(processes=min(n_workers, len(tasks_near))) as pool:
-            results_near = pool.map(compute_sdf_for_class, tasks_near)
-        
-        for class_idx, sdf in results_near:
-            near_sdf_heur_all[:, class_idx] = sdf
+        if use_parallel:
+            tasks_near = [
+                (near_points, verts, args.vol_threshold, c-1)
+                for c, verts in scaled_meshes.items()
+            ]
+            
+            near_sdf_heur_all = np.full((len(near_points), args.classes), 99.0, dtype=np.float32)
+            
+            with Pool(processes=min(n_workers, len(tasks_near))) as pool:
+                results_near = pool.map(compute_sdf_for_class, tasks_near)
+            
+            for class_idx, sdf in results_near:
+                near_sdf_heur_all[:, class_idx] = sdf
+        else:
+            # Sequential
+            near_sdf_heur_all = np.full((len(near_points), args.classes), 99.0, dtype=np.float32)
+            for c, verts in scaled_meshes.items():
+                sdf = compute_heuristic_sdf_single_batch(near_points, verts, args.vol_threshold)
+                near_sdf_heur_all[:, c-1] = sdf
         
         # Heuristic Labels - FIXED for consistency
         near_labels = np.zeros(len(near_points), dtype=np.int8)
