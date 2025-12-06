@@ -245,23 +245,18 @@ def process_file(file_path, args):
         
         # Combine: Union SDF is minimum across all classes
         vol_sdf = np.min(vol_sdf_all, axis=1)
+        
+        # CRITICAL FIX: Get labels directly from original voxel values
+        # Instead of deriving from SDF (which has threshold artifacts),
+        # we look up the original voxel value at each sampled point
         vol_labels = np.zeros(len(vol_points), dtype=np.int8)
+        for i, voxel_coord in enumerate(vol_points_voxel):
+            x, y, z = voxel_coord.astype(int)
+            # Ensure within bounds
+            if 0 <= x < data.shape[0] and 0 <= y < data.shape[1] and 0 <= z < data.shape[2]:
+                vol_labels[i] = int(data[x, y, z])
         
-        # CRITICAL FIX: Only assign labels where Union SDF says "inside"
-        is_inside_vol = vol_sdf < 0
-        
-        # For inside points, find the class with MOST NEGATIVE (deepest inside) SDF
-        # This ensures the assigned class also thinks the point is inside
-        for i in np.where(is_inside_vol)[0]:
-            # Get SDF values for this point across all classes
-            class_sdfs = vol_sdf_all[i, :]
-            # Find classes that consider this point inside (SDF < 0)
-            inside_classes = np.where(class_sdfs < 0)[0]
-            if len(inside_classes) > 0:
-                # Assign label of the class with most negative SDF
-                deepest_class = inside_classes[np.argmin(class_sdfs[inside_classes])]
-                vol_labels[i] = deepest_class + 1
-            # else: leave as 0 (background) if no class thinks it's inside
+        print(f"    Vol labels: {len(np.unique(vol_labels))} classes present")
         
         # ---------------------------------------------------------------------
         # COMPUTE: NEAR POINTS (Hybrid)
