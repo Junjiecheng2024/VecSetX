@@ -199,13 +199,25 @@ def process_file(file_path, args):
         for class_idx, sdf in results:
             vol_sdf_all[:, class_idx] = sdf
         
-        # Combine
+        # Combine: Union SDF is minimum across all classes
         vol_sdf = np.min(vol_sdf_all, axis=1)
         vol_labels = np.zeros(len(vol_points), dtype=np.int8)
-        min_indices = np.argmin(vol_sdf_all, axis=1)
         
+        # CRITICAL FIX: Only assign labels where Union SDF says "inside"
         is_inside_vol = vol_sdf < 0
-        vol_labels[is_inside_vol] = min_indices[is_inside_vol] + 1
+        
+        # For inside points, find the class with MOST NEGATIVE (deepest inside) SDF
+        # This ensures the assigned class also thinks the point is inside
+        for i in np.where(is_inside_vol)[0]:
+            # Get SDF values for this point across all classes
+            class_sdfs = vol_sdf_all[i, :]
+            # Find classes that consider this point inside (SDF < 0)
+            inside_classes = np.where(class_sdfs < 0)[0]
+            if len(inside_classes) > 0:
+                # Assign label of the class with most negative SDF
+                deepest_class = inside_classes[np.argmin(class_sdfs[inside_classes])]
+                vol_labels[i] = deepest_class + 1
+            # else: leave as 0 (background) if no class thinks it's inside
         
         # ---------------------------------------------------------------------
         # COMPUTE: NEAR POINTS (Hybrid)
@@ -230,15 +242,21 @@ def process_file(file_path, args):
         for class_idx, sdf in results_near:
             near_sdf_heur_all[:, class_idx] = sdf
         
-        # Heuristic Labels
-        near_labels_prob = np.argmin(near_sdf_heur_all, axis=1) + 1
-        
-        # C. Fusion
-        near_sdf = near_sdf_union
+        # Heuristic Labels - FIXED for consistency
         near_labels = np.zeros(len(near_points), dtype=np.int8)
         
+        # C. Fusion: Use mesh_to_sdf geometry, assign labels only where inside
+        near_sdf = near_sdf_union
         is_inside_near = near_sdf < 0
-        near_labels[is_inside_near] = near_labels_prob[is_inside_near]
+        
+        # For inside points, find the class with most negative heuristic SDF
+        for i in np.where(is_inside_near)[0]:
+            class_sdfs = near_sdf_heur_all[i, :]
+            inside_classes = np.where(class_sdfs < 0)[0]
+            if len(inside_classes) > 0:
+                deepest_class = inside_classes[np.argmin(class_sdfs[inside_classes])]
+                near_labels[i] = deepest_class + 1
+            # else: leave as 0 if no class thinks it's inside
         
         # ---------------------------------------------------------------------
         # SAVE
