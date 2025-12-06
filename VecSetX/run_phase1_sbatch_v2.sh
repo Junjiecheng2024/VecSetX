@@ -34,13 +34,13 @@ torchrun --nproc_per_node=4 --master_port=29500 VecSetX/vecset/main_ae.py \
     --input_dim 13 \
     --epochs 400 \
     --data_path /scratch/project_2016517/junjie/dataset/repaired_npz \
-    --output_dir output/ae/phase1_production_v3 \
-    --log_dir output/ae/phase1_production_v3 \
-    --blr 1e-3 \
+    --output_dir output/ae/phase1_production_v4 \
+    --log_dir output/ae/phase1_production_v4 \
+    --blr 2e-4 \
     --warmup_epochs 20 \
     --wandb
 
-# KEY CHANGE LOG (V3):
-# 1. Weights: loss_near * 50 (was 10), loss_surface * 100 (was 10) -- Force surface learning
-# 2. Validation: IoU now reports near_iou directly (was near+vol/2, causing artificial drop)
-# 3. Output: v3 directory
+# KEY CHANGE LOG (V4):
+# 1. blr: 1e-3 → 2e-4 (Lowered to fix instability/oscillation)
+# 2. Weights: loss_near * 50, loss_surface * 100 (Kept high to strict surface)
+# 3. Output: v4 directory

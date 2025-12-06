@@ -59,6 +59,16 @@ class Objaverse(data.Dataset):
                     surface_labels = data['surface_labels']
                 else:
                     surface_labels = None
+                
+                if 'vol_labels' in data:
+                    vol_labels = data['vol_labels']
+                else:
+                    vol_labels = np.zeros(vol_points.shape[0], dtype=np.int8)
+
+                if 'near_labels' in data:
+                    near_labels = data['near_labels']
+                else:
+                    near_labels = np.zeros(near_points.shape[0], dtype=np.int8)
         except Exception as e:
             idx = np.random.randint(self.__len__())
             return self.__getitem__(idx)
@@ -114,25 +124,16 @@ class Objaverse(data.Dataset):
                 ind = np.random.default_rng().choice(vol_points.shape[0], self.sdf_size//2, replace=True)
                 neg_vol_points = vol_points[ind]
                 neg_vol_sdf = vol_sdf[ind]
+                near_sdf = torch.from_numpy(near_sdf).float()
+                near_labels = torch.from_numpy(near_labels).float()
 
-            vol_points = np.concatenate([pos_vol_points, neg_vol_points], axis=0)
-            vol_sdf = np.concatenate([pos_vol_sdf, neg_vol_sdf], axis=0)
-            ###
-
-            ind = np.random.default_rng().choice(near_points.shape[0], self.sdf_size, replace=False)
-            near_points = near_points[ind]
-            near_sdf = near_sdf[ind]
-
-        
-        vol_points = torch.from_numpy(vol_points)
-        vol_sdf = torch.from_numpy(vol_sdf).float()
-
-        if True: # Always return both vol and near points
-            near_points = torch.from_numpy(near_points)
-            near_sdf = torch.from_numpy(near_sdf).float()
-
-            points = torch.cat([vol_points, near_points], dim=0)
-            sdf = torch.cat([vol_sdf, near_sdf], dim=0)
+                points = torch.cat([vol_points, near_points], dim=0)
+                
+                # Stack SDF and Labels: (N, 2)
+                vol_target = torch.stack([vol_sdf, vol_labels.flatten()], dim=1)
+                near_target = torch.stack([near_sdf, near_labels.flatten()], dim=1)
+                
+                sdf = torch.cat([vol_target, near_target], dim=0)
 
         if self.transform:
             # Note: transform usually expects (surface, points). 

@@ -86,11 +86,8 @@ class Attention(nn.Module):
         k_t = k.transpose(1, 2)
         v_t = v.transpose(1, 2)
         
-        # Manual implementation to ensure backward pass works
-        scale = self.scale
-        sim = torch.matmul(q_t, k_t.transpose(-2, -1)) * scale
-        attn = sim.softmax(dim=-1)
-        out = torch.matmul(attn, v_t)
+        # Use optimized PyTorch SDPA
+        out = F.scaled_dot_product_attention(q_t, k_t, v_t, dropout_p=0.0, is_causal=False)
         
         # Transpose back to (batch, seq_len, heads, dim)
         out = out.transpose(1, 2)

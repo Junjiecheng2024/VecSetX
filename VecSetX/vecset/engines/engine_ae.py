@@ -75,34 +75,54 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             points_all = torch.cat([points, surface[:, :, :3]], dim=1)
             outputs = model(surface, points_all)
 
-            output = outputs['o']
-
-            grad = points_gradient(points_all, output)
-
-            with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=False):
-                # TODO: hard coded point numbers
-                loss_eikonal = (grad[:, :].norm(2, dim=-1) - 1).pow(2).mean()
-                loss_vol = criterion(output[:, :1024], labels[:, :1024])
-                loss_near = criterion(output[:, 1024:2048], labels[:, 1024:2048])
-                loss_surface = (output[:, 2048:]).abs().mean()
+                output = output['o']
                 
-                # print(grad.shape, surface_normals.shape)
-                # inner = torch.einsum('b n c, b n c -> b n', grad[:, 2048:], surface_normals)
+                # output: (B, N, 11) -> SDF (0), Labels (1..10)
+                # labels: (B, N, 2) -> SDF (0), LabelIdx (1)
                 
-                # print(inner.max(), inner.min(), inner.mean())
-                # print(F.l1_loss(grad[:, 2048:], surface_normals), F.l1_loss(grad[:, 2048:], -surface_normals))
-                # loss_surface_normal = F.l1_loss(F.normalize(grad[:, 2048:], dim=2), surface_normals)
-                # loss_surface_normal = 1 - torch.einsum('b n c, b n c -> b n', (F.normalize(grad[:, 2048:], dim=2, eps=1e-6), surface_normals)).mean()
+                pred_sdf = output[:, :, 0]
+                pred_logits = output[:, :, 1:]
+                
+                target_sdf = labels[:, :, 0]
+                target_labels_idx = labels[:, :, 1].long()
+                
+                grad = points_gradient(points_all, output[:, :, 0:1]) # Grad of SDF channel only
 
-                loss = loss_vol + 50 * loss_near + 0.001 * loss_eikonal + 100 * loss_surface# + 0.01 * loss_surface_normal
+                loss_eikonal = (grad[:, :1024].norm(2, dim=-1) - 1).pow(2).mean() # Eikonal on Vol pts?
+                # Note: Vol points are first 1024?
+                # Objaverse returns cat([vol, near]). Vol is first.
+                
+                loss_vol = criterion(pred_sdf[:, :1024], target_sdf[:, :1024])
+                loss_near = criterion(pred_sdf[:, 1024:2048], target_sdf[:, 1024:2048])
+                loss_surface = (pred_sdf[:, 2048:]).abs().mean()
+                
+                # Classification Loss
+                # Background class (0) implicitly handled?
+                # If using BCEWithLogitsLoss(pred_logits, target_one_hot):
+                # We have 10 logits for classes 1-10.
+                # If label=0, target_one_hot is all zeros (good).
+                # If label=k, target_one_hot[k-1] = 1.
+                
+                target_one_hot = F.one_hot(target_labels_idx, num_classes=11)[:, :, 1:].float()
+                loss_cls = F.binary_cross_entropy_with_logits(pred_logits, target_one_hot)
+
+                loss = loss_vol + 50 * loss_near + 0.001 * loss_eikonal + 100 * loss_surface + 1.0 * loss_cls
 
 
         loss_value = loss.item()
 
         threshold = 0
 
-        vol_iou = calc_iou(output[:, :1024], labels[:, :1024], threshold)
-        near_iou = calc_iou(output[:, 1024:2048], labels[:, 1024:2048], threshold)
+        vol_iou = calc_iou(pred_sdf[:, :1024], target_sdf[:, :1024], threshold)
+        near_iou = calc_iou(pred_sdf[:, 1024:2048], target_sdf[:, 1024:2048], threshold)
+        
+        # Calculate Classification Accuracy
+        # Pred Class = argmax(logits) + 1? Or threshold?
+        # If max(logits) < 0, class 0?
+        # Let's use argmax over (0 vector, logits).
+        pred_probs = torch.cat([torch.zeros_like(pred_logits[:, :, :1]), pred_logits], dim=2)
+        pred_cls = torch.argmax(pred_probs, dim=2)
+        acc = (pred_cls == target_labels_idx).float().mean()
 
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
@@ -127,6 +147,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         metric_logger.update(vol_iou=vol_iou.item())
         metric_logger.update(near_iou=near_iou.item())
+        metric_logger.update(acc=acc.item())
 
         min_lr = 10.
         max_lr = 0.
@@ -174,49 +195,46 @@ def evaluate(data_loader, model, device):
             points_all = torch.cat([points, surface[:, :, :3]], dim=1)
             outputs = model(surface, points_all)
             output = outputs['o']
+            
+            # output: (B, N, 11)
+            pred_sdf = output[:, :, 0]
+            pred_logits = output[:, :, 1:]
+            
+            target_sdf = labels[:, :, 0]
+            target_labels_idx = labels[:, :, 1].long()
+            
+            # Validation logic
+            # Objaverse returns 2048 points (Vol+Near)
+            
+            loss_vol = criterion(pred_sdf[:, :1024], target_sdf[:, :1024])
+            loss_near = criterion(pred_sdf[:, 1024:2048], target_sdf[:, 1024:2048])
+            loss_surface = (pred_sdf[:, 2048:]).abs().mean()
+            
+            target_one_hot = F.one_hot(target_labels_idx, num_classes=11)[:, :, 1:].float()
+            loss_cls = F.binary_cross_entropy_with_logits(pred_logits, target_one_hot)
+            
+            loss = loss_vol + 10 * loss_near + 10 * loss_surface + loss_cls
 
-            # Validation data only has near_points (1024), not vol_points + near_points (2048)
-            # So we need to handle this difference dynamically
-            num_query_points = points.shape[1]  # Should be 1024 for val, 2048 for train
+            pred_probs = torch.cat([torch.zeros_like(pred_logits[:, :, :1]), pred_logits], dim=2)
+            pred_cls = torch.argmax(pred_probs, dim=2)
+            acc = (pred_cls == target_labels_idx).float().mean()
             
-            if num_query_points == 2048:
-                # Training mode: split into vol and near
-                loss_vol = criterion(output[:, :1024], labels[:, :1024])
-                loss_near = criterion(output[:, 1024:2048], labels[:, 1024:2048])
-                loss_surface = (output[:, 2048:]).abs().mean()
-                
-                vol_iou = calc_iou(output[:, :1024], labels[:, :1024], 0)
-                near_iou = calc_iou(output[:, 1024:2048], labels[:, 1024:2048], 0)
-            else:
-                # Validation mode: only near points (1024)
-                loss_vol = torch.tensor(0.0).to(device)  # No vol points in validation
-                loss_near = criterion(output[:, :1024], labels[:, :1024])
-                loss_surface = (output[:, 1024:]).abs().mean()
-                
-                vol_iou = torch.tensor(0.0).to(device)  # No vol points in validation
-                near_iou = calc_iou(output[:, :1024], labels[:, :1024], 0)
-            
-            # Note: We skip eikonal loss in validation as it requires gradients
-            
-            loss = loss_vol + 10 * loss_near + 10 * loss_surface
+            vol_iou = calc_iou(pred_sdf[:, :1024], target_sdf[:, :1024], 0)
+            near_iou = calc_iou(pred_sdf[:, 1024:2048], target_sdf[:, 1024:2048], 0)
 
-        batch_size = points.shape[0]
         metric_logger.update(loss=loss.item())
         metric_logger.update(loss_vol=loss_vol.item())
         metric_logger.update(loss_near=loss_near.item())
         metric_logger.update(loss_surface=loss_surface.item())
+        metric_logger.update(loss_cls=loss_cls.item())
         metric_logger.update(vol_iou=vol_iou.item())
         metric_logger.update(near_iou=near_iou.item())
+        metric_logger.update(acc=acc.item())
         
         # Combined IoU for reporting
-        if num_query_points == 2048:
-            metric_logger.update(iou=(vol_iou.item() + near_iou.item()) / 2.0)
-        else:
-            metric_logger.update(iou=near_iou.item())
+        metric_logger.update(iou=(vol_iou.item() + near_iou.item()) / 2.0)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    print('* IoU {iou.global_avg:.3f} loss {losses.global_avg:.3f}'
-          .format(iou=metric_logger.iou, losses=metric_logger.loss))
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}

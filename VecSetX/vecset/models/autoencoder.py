@@ -129,7 +129,7 @@ class VecSetAutoEncoder(nn.Module):
 
 def create_autoencoder(depth=24, dim=512, M=512, N=2048, query_type='point', bottleneck=None, bottleneck_args={}, input_dim=3):
     model = VecSetAutoEncoder(
-        depth=depth, dim=dim, output_dim=1, num_inputs=N, 
+        depth=depth, dim=dim, output_dim=11, num_inputs=N, 
         num_latents=M, query_type=query_type, 
         bottleneck=bottleneck, 
         bottleneck_args=bottleneck_args,
