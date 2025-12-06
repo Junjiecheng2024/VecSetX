@@ -182,10 +182,10 @@ def process_file(file_path, args):
         # GENERATE POINTS - STRATIFIED SAMPLING
         # ---------------------------------------------------------------------
         # Background ratio in original data: ~80%
-        # To boost small structure sampling, we use stratified sampling:
-        # - 60% from background (instead of 80%)
-        # - 40% from anatomical structures (union mask)
-        # This gives ~2x higher sampling density for structures
+        # To boost small structure sampling, we use AGGRESSIVE stratified sampling:
+        # - 40% from background (down from 80%)
+        # - 60% from anatomical structures (up from 20%)
+        # This gives ~3x higher sampling density for structures
         
         # Create union mask (any structure)
         union_mask = (data > 0)
@@ -194,9 +194,9 @@ def process_file(file_path, args):
         bg_coords = np.argwhere(~union_mask)  # Background
         struct_coords = np.argwhere(union_mask)  # Any structure
         
-        # Stratified sampling
-        n_bg = int(args.num_vol_points * 0.6)  # 60% from background
-        n_struct = args.num_vol_points - n_bg  # 40% from structures
+        # Stratified sampling - AGGRESSIVE
+        n_bg = int(args.num_vol_points * 0.4)  # 40% from background
+        n_struct = args.num_vol_points - n_bg  # 60% from structures
         
         # Sample from background
         if len(bg_coords) > 0:
