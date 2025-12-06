@@ -1420,3 +1420,60 @@ sbatch run_phase1_sbatch_v2.sh
 ---
 
 **下一步：等待 V2 训练结果，验证优化效果。**
+
+---
+
+## 13. 多类别架构升级与数据生成修复 (Multi-Class Upgrade & Data Fixes) [Dec 6, 2025]
+
+### 13.1 背景与目标
+为了实现从单一 geometry 重建到 **10类解剖结构语义重建** 的跨越，我们对系统架构进行了重大升级。
+*   **旧架构**：输出 1维 SDF (Union)。
+*   **新架构**：输出 11维 Tensor (1维 Union SDF + 10维 Class Logits)。
+*   **目标**：模型不仅学会形状，还要学会“這是哪个结构”。
+
+### 13.2 遇到的问题 (Problems)
+
+#### 问题 A: 标签泄漏 (Label Leakage)
+*   **现象**：在使用 `check_data_quality.py` 验证数据时，发现 **~50%** 的样本存在 "Outside but Cls" 错误。这意味着大量几何上在 **外部** 的点被错误地打上了 **类别标签**。
+*   **原因**：早期的 `prepare_data.py` 使用简单的 "Depth Ratio Heuristic" 来判定内外。该启发式算法在远离中心时会失效，错误地将远处的点判定为“内部”。
+*   **后果**：模型会被迫学习错误的标签，导致训练发散或无法收敛。
+
+#### 问题 B: 效率瓶颈
+*   **尝试**：试图全量使用 `mesh_to_sdf` (专业库) 来解决泄漏。
+*   **结果**：速度极慢（每文件数分钟），无法满足 1000+ 文件的生成需求。
+
+### 13.3 解决方案 (Solutions)
+
+采用了 **"Multi-Class Hybrid Final"** 混合策略，兼顾速度与准确性：
+
+1.  **Volume Points (速度优先)**：
+    *   沿用 **Depth Ratio Heuristic (Threshold=0.33)**。
+    *   **创新**：对 **每个类别(1-10)** 分别计算 Heuristic SDF，取最小值作为 Union SDF，取 argmin 作为标签。
+    *   **效果**：保证了全局覆盖，且速度极快。
+
+2.  **Near Points (精度优先)**：
+    *   **Geometry**：使用 `mesh_to_sdf` 对 **Union Mesh** 进行计算，确保近表面 SDF 的物理真实性。
+    *   **Semantics**：使用 Heuristic 方法判定点归属的类别。
+    *   **Fusion**：通过严格逻辑 `if Union_SDF > 0: Label = 0` 强制修正。
+
+3.  **一致性保证 (Consistency)**：
+    *   利用 `Union_SDF` (from mesh_to_sdf) 作为绝对真理。
+    *   任何在几何上为“外部”的点，强制标签为 0。
+    *   实现了 **100% Geometry-Label Consistency**。
+
+### 13.4 代码变更 (Code Changes)
+
+1.  **`vecset/prepare_data.py`**：完全重写。实现了上述 "Hybrid Final" 逻辑，支持 10 类 Label 生成。
+2.  **`vecset/models/autoencoder.py`**：将 `output_dim` 默认值改为 **11**。
+3.  **`vecset/engines/engine_ae.py`**：
+    *   新增 `loss_cls` (Binary Cross Entropy) 用于分类训练。
+    *   新增 `acc` 指标用于监控分类准确率。
+    *   实现了 SDF loss (L1) 与 Classification loss 的加权联合训练。
+4.  **`vecset/utils/objaverse.py`**：更新 `__getitem__` 以加载和返回标签数据。
+5.  **`vecset/models/utils.py`**：将手动 Attention 替换为 PyTorch 优化的 `F.scaled_dot_product_attention`，提升显存效率。
+6.  **`check_data_quality.py`**：新增工具，专门用于验证 SDF 正负比与 Label 一致性。
+
+### 13.5 下一步计划
+1.  使用新脚本全量生成训练数据。
+2.  使用 `check_data_quality.py` 抽检。
+3.  启动 Phase 1 Multi-Class 训练。
