@@ -7,8 +7,8 @@ def check_file(npz_path):
     print(f"Checking {os.path.basename(npz_path)}...")
     try:
         data = np.load(npz_path)
-        vol_sdf = data['vol_sdf']
-        near_sdf = data['near_sdf']
+        vol_sdf = data['vol_sdf'].flatten()  # Ensure 1D
+        near_sdf = data['near_sdf'].flatten()  # Ensure 1D
         
         # 1. SDF Balance
         vol_pos = (vol_sdf > 0).mean()
@@ -17,8 +17,8 @@ def check_file(npz_path):
         
         # 2. Label Existence & Distribution
         if 'vol_labels' in data and 'near_labels' in data:
-            vol_labels = data['vol_labels']
-            near_labels = data['near_labels']
+            vol_labels = data['vol_labels'].flatten()  # Ensure 1D
+            near_labels = data['near_labels'].flatten()  # Ensure 1D
             
             print(f"  [Labels] Found vol_labels & near_labels")
             
