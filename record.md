@@ -1201,3 +1201,222 @@ sbatch run_phase1_sbatch.sh
 
 **数据集调优完成！准备开始正式训练。**
 
+---
+
+## 12. 训练停滞问题诊断与优化 (Training Stagnation and Optimization) [Dec 6, 2025]
+
+使用新数据集开始训练后，虽然 IoU 从 0 突破到 0.26，但在 Epoch ~20 后训练出现停滞。
+
+### 12.1 训练进展观察
+
+#### 初始阶段 (Epoch 0-35)
+
+**突破性进展**：
+*   **Epoch 30**: IoU = 0.000 (仍为 0)
+*   **Epoch 35**: IoU = 0.264 ✅ (首次突破！)
+*   **Epoch 36**: vol_iou = 0.50, near_iou = 0.52 ✅
+
+**关键发现**：
+*   near_sdf 使用 mesh_to_sdf 生成，质量完美 → near_iou 率先达到 0.52
+*   vol_sdf 使用深度比例启发式 → vol_iou 紧随其后达到 0.50
+*   新数据集相比旧数据有**质的飞跃**（从 140 epoch IoU=0 到 35 epoch IoU=0.26）
+
+#### 停滞阶段 (Epoch 36-107)
+
+**训练曲线**：
+*   train_loss: 0.47 (初始) → 0.42 (Epoch ~20) → **0.42 (持平至 Epoch 107)** ⚠️
+*   test_loss: 0.095 → 0.076 (轻微下降但缓慢)
+*   train_vol_iou: ~0.25 (震荡但不上升)
+*   train_near_iou: ~0.26 (震荡但不上升)
+*   test_vol_iou: 0.0 (硬编码为 0，验证集无 vol points)
+*   test_near_iou: 0.0 ↔ 0.52 (剧烈震荡)
+
+**震荡现象**：
+*   IoU 在 0 和 0.5 之间跳跃
+*   原因：threshold=0 的二值化判断 + 模型预测不稳定
+*   早期训练的正常现象，但应随训练稳定
+
+### 12.2 根因分析
+
+#### 问题：学习率衰减过快
+
+**当前训练配置** (`run_phase1_sbatch.sh`):
+```bash
+--blr 4e-4           # base_lr = 0.0004
+--warmup_epochs 10
+--epochs 800
+```
+
+**学习率调度策略** (`lr_sched.py`):
+```python
+# Warmup (Epoch 0-10): linear 0 → 0.0004
+# Cosine decay (Epoch 10-800): 0.0004 → min_lr
+lr = min_lr + (max_lr - min_lr) * 0.5 * (1 + cos(π * (epoch-10) / 790))
+```
+
+**Epoch 107 的学习率**：
+```
+lr = min_lr + (0.0004 - min_lr) * 0.5 * (1 + cos(π * 97/790))
+lr ≈ 0.000097  # 仅为初始 LR 的 24%！
+```
+
+**问题所在**：
+1.  base_lr 本身就偏小 (0.0004)
+2.  800 epochs 的长调度 + cosine decay 导致 LR 快速下降
+3.  Epoch 107/800 (仅完成 13%) 时 LR 已降至初始的 24%
+4.  模型权重更新步长太小，无法有效优化
+
+#### 其他潜在问题
+
+1.  **Eikonal loss 权重过小**
+    *   当前：`loss_eikonal_weight = 0.001`
+    *   现象：eikonal_loss 一直为 1.0（梯度场不 smooth）
+    *   影响：权重太小 (0.001)，对总 loss 贡献可忽略
+
+2.  **IoU 二值化阈值敏感**
+    *   threshold = 0 将连续 SDF 强行二值化
+    *   微小预测偏差导致巨大 IoU 差异
+    *   早期训练震荡严重
+
+### 12.3 优化方案
+
+#### 方案 A: 重新训练（推荐）✅
+
+创建 `run_phase1_sbatch_v2.sh` 优化配置：
+
+**关键改进**：
+```bash
+# V1 (当前)          # V2 (优化)
+--blr 4e-4           → --blr 1e-3        # 提高 2.5 倍
+--warmup_epochs 10   → --warmup_epochs 20 # 更稳定预热
+--epochs 800         → --epochs 400       # 减半，LR 衰减更慢
+```
+
+**学习率对比**：
+
+| Epoch | V1 (当前) | V2 (优化) | 倍数 |
+|-------|----------|-----------|------|
+| 20 | 0.000395 | 0.000975 | 2.5x |
+| 50 | 0.000353 | 0.000875 | 2.5x |
+| **107** | **0.000097** | **0.000715** | **7.4x** |
+| 200 | ~0.00002 | 0.000500 | 25x |
+| 400 | ~0.00001 | (end) | - |
+
+**预期效果**：
+*   **Epoch 50**: IoU > 0.3-0.4
+*   **Epoch 100**: IoU > 0.45-0.55
+*   **Epoch 200**: IoU > 0.55-0.65
+*   **Epoch 400**: 最终收敛
+
+**优势**：
+1.  ✅ 学习率更高，收敛更快
+2.  ✅ 清晰的训练起点，无历史包袱
+3.  ✅ 总 epoch 更少（800 → 400），节省时间
+
+#### 方案 B: 继续当前训练 + 手动调整
+
+保留当前 107 epoch 进度，手动提升学习率：
+
+**实现方式**：
+修改 `lr_sched.py`：
+```python
+def adjust_learning_rate(optimizer, epoch, args):
+    if epoch >= 100:
+        boost_factor = 3.0  # LR 提升 3 倍
+        lr = base_lr * boost_factor
+    else:
+        # ... 原有调度
+```
+
+**优势**：
+*   不丢失 107 epoch 的训练进度
+
+**劣势**：
+*   更复杂，需要修改代码
+*   可能效果不如重新训练
+
+#### 方案 C: 等待并观察
+
+继续当前训练至 Epoch 200-300。
+
+**劣势**：
+*   学习率太低，大概率继续停滞
+*   浪费计算资源
+
+### 12.4 最终决策
+
+**采用方案 A：重新训练，使用优化配置**
+
+**理由**：
+1.  当前训练已停滞 80+ epochs，继续下去意义不大
+2.  学习率过低是根本问题，需要系统性调整
+3.  V2 配置针对性解决 LR 问题
+4.  结合优质数据 + 优化超参，应该能更快收敛
+5.  重新开始比修补更简洁可控
+
+**执行步骤**：
+```bash
+# 1. 取消当前训练
+scancel <job_id>
+
+# 2. 提交优化版本
+cd /projappl/project_2016517/JunjieCheng/VecSetX
+sbatch run_phase1_sbatch_v2.sh
+
+# 3. 监控训练
+# - 前 20 epoch 观察 warmup 效果
+# - Epoch 50 检查 loss 是否 < 0.38
+# - Epoch 100 检查 IoU 是否 > 0.45
+```
+
+### 12.5 配置文件
+
+**V1 配置** (`run_phase1_sbatch.sh`):
+*   base_lr: 4e-4
+*   warmup: 10 epochs
+*   total: 800 epochs
+*   结果：Epoch 107 停滞
+
+**V2 优化配置** (`run_phase1_sbatch_v2.sh`):
+*   base_lr: 1e-3 ✅
+*   warmup: 20 epochs ✅
+*   total: 400 epochs ✅
+*   output_dir: `output/ae/phase1_production_v2`
+
+### 12.6 经验教训
+
+1.  **学习率调度至关重要**
+    *   总 epoch 数直接影响 cosine decay 速度
+    *   长调度 (800) 适合收敛慢的任务，但 LR 衰减太快
+    *   短调度 (400) + 高 base_lr 可能更适合当前任务
+
+2.  **Warmup 的重要性**
+    *   10 epochs 可能太短
+    *   20 epochs 提供更稳定的初始化
+
+3.  **监控训练曲线**
+    *   Loss 持平 > 20 epochs 需警惕
+    *   应检查学习率是否过低
+    *   IoU 震荡在早期正常，但应逐步减小
+
+4.  **Base LR 选择**
+    *   4e-4 偏保守
+    *   1e-3 更常见于 vision transformer 训练
+
+### 12.7 待验证假设
+
+**假设 1**: 更高的 LR 会打破停滞
+*   验证方法：V2 训练 50 epochs 后观察 loss
+*   成功标志：loss < 0.38
+
+**假设 2**: 400 epochs 足够收敛
+*   验证方法：观察 Epoch 300-400 的 loss/IoU 变化
+*   成功标志：最后 50 epochs 变化 < 1%
+
+**假设 3**: 数据质量已不是瓶颈
+*   假设新数据集质量足够好
+*   如果 V2 仍停滞，可能需要考虑模型容量或其他因素
+
+---
+
+**下一步：等待 V2 训练结果，验证优化效果。**

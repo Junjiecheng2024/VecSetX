@@ -94,7 +94,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 # loss_surface_normal = F.l1_loss(F.normalize(grad[:, 2048:], dim=2), surface_normals)
                 # loss_surface_normal = 1 - torch.einsum('b n c, b n c -> b n', (F.normalize(grad[:, 2048:], dim=2, eps=1e-6), surface_normals)).mean()
 
-                loss = loss_vol + 10 * loss_near + 0.001 * loss_eikonal + 10 * loss_surface# + 0.01 * loss_surface_normal
+                loss = loss_vol + 50 * loss_near + 0.001 * loss_eikonal + 100 * loss_surface# + 0.01 * loss_surface_normal
 
 
         loss_value = loss.item()
@@ -209,7 +209,10 @@ def evaluate(data_loader, model, device):
         metric_logger.update(near_iou=near_iou.item())
         
         # Combined IoU for reporting
-        metric_logger.update(iou=(vol_iou.item() + near_iou.item()) / 2.0)
+        if num_query_points == 2048:
+            metric_logger.update(iou=(vol_iou.item() + near_iou.item()) / 2.0)
+        else:
+            metric_logger.update(iou=near_iou.item())
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()

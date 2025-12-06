@@ -34,14 +34,13 @@ torchrun --nproc_per_node=4 --master_port=29500 VecSetX/vecset/main_ae.py \
     --input_dim 13 \
     --epochs 400 \
     --data_path /scratch/project_2016517/junjie/dataset/repaired_npz \
-    --output_dir output/ae/phase1_production_v2 \
-    --log_dir output/ae/phase1_production_v2 \
+    --output_dir output/ae/phase1_production_v3 \
+    --log_dir output/ae/phase1_production_v3 \
     --blr 1e-3 \
     --warmup_epochs 20 \
     --wandb
 
-# KEY CHANGES:
-# 1. blr: 4e-4 → 1e-3 (提高2.5倍，学习更快)
-# 2. warmup_epochs: 10 → 20 (更稳定的预热)
-# 3. epochs: 800 → 400 (减少总epoch，学习率衰减更慢)
-# 4. output_dir: 新目录避免覆盖
+# KEY CHANGE LOG (V3):
+# 1. Weights: loss_near * 50 (was 10), loss_surface * 100 (was 10) -- Force surface learning
+# 2. Validation: IoU now reports near_iou directly (was near+vol/2, causing artificial drop)
+# 3. Output: v3 directory
