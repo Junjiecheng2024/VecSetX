@@ -36,6 +36,7 @@ class Objaverse(data.Dataset):
         self.normal_folder = dataset_folder.replace('objaverse', 'objaverse_normals')
 
         csv_path = os.path.join(os.path.dirname(__file__), 'objaverse_{}.csv'.format(split))
+        print(f"Objaverse: Loading CSV from {csv_path}")
         with open(csv_path, newline='') as csvfile:
             reader = csv.reader(csvfile, delimiter=',')
 

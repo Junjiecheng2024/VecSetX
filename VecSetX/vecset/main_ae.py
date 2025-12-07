@@ -115,8 +115,25 @@ def main(args):
     torch.manual_seed(seed)
     np.random.seed(seed)
 
-    dataset_train = Objaverse(split='train', sdf_sampling=True, sdf_size=4096, surface_sampling=True, surface_size=args.point_cloud_size, dataset_folder=args.data_path)
-    dataset_val = Objaverse(split='val', sdf_sampling=True, sdf_size=4096, surface_sampling=True, surface_size=args.point_cloud_size, dataset_folder=args.data_path)
+    print(f"Initializing Dataset with path: {args.data_path}")
+    if not os.path.exists(args.data_path):
+        raise FileNotFoundError(f"Data path does not exist: {args.data_path}")
+
+    # Verify CSV files existence (Objaverse internal check)
+    import vecset.utils.objaverse as obj_utils
+    csv_dir = os.path.dirname(obj_utils.__file__)
+    for split in ['train', 'val']:
+        csv_path = os.path.join(csv_dir, f'objaverse_{split}.csv')
+        if not os.path.exists(csv_path):
+             raise FileNotFoundError(f"Objaverse CSV not found: {csv_path}. Please run create_csv.py or sync files.")
+    
+    try:
+        dataset_train = Objaverse(split='train', sdf_sampling=True, sdf_size=4096, surface_sampling=True, surface_size=args.point_cloud_size, dataset_folder=args.data_path)
+        dataset_val = Objaverse(split='val', sdf_sampling=True, sdf_size=4096, surface_sampling=True, surface_size=args.point_cloud_size, dataset_folder=args.data_path)
+        print(f"Dataset initialized. Train: {len(dataset_train)}, Val: {len(dataset_val)}")
+    except Exception as e:
+        print(f"Fatal Error initializing Objaverse dataset: {e}")
+        raise e
 
     if True:  # args.distributed:
         num_tasks = misc.get_world_size()
@@ -147,9 +164,16 @@ def main(args):
             print("Warning: Tensorboard not available, skipping logging.")
             
         if args.wandb:
-            # Replace with your actual WandB API key
-            wandb.login(key="d6891a1bb4397a24519ef1b36091aa1b77ea67e1")
-            wandb.init(project="VecSetAutoEncoder", config=args)
+            try:
+                # Replace with your actual WandB API key
+                print(f"Attempting WandB login...")
+                wandb.login(key="d6891a1bb4397a24519ef1b36091aa1b77ea67e1")
+                wandb.init(project="VecSetAutoEncoder", config=args)
+                print(f"WandB initialized successfully.")
+            except Exception as e:
+                print(f"Warning: WandB initialization failed: {e}")
+                print("Continuing without WandB logging...")
+                args.wandb = False
     else:
         log_writer = None
 

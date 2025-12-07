@@ -1858,3 +1858,61 @@ python process_missing.py
 - file_workers: 16
 - Stratified sampling: 35bg/65struct (normalized space)
 - 总耗时: 1-2小时（998文件）
+
+## 16. DataLoader Bug修复与训练启动 (2025-12-07)
+
+在启动Phase 1训练时，遇到了一系列与DataLoader和SDF采样相关的bug，通过以下步骤逐一解决：
+
+### 16.1 DataLoader中的`UnboundLocalError`
+
+**问题**：
+训练启动后报错：`UnboundLocalError: local variable 'points' referenced before assignment`。
+
+**原因**：
+在`Objaverse.__getitem__`中，`points`变量定义在if/else分支中，但在某些代码路径下没有被正确初始化。
+
+**修复**：
+重写了SDF采样逻辑，使用明确的`pos_ind`和`neg_ind`变量，确保在所有分支中都正确采样`points`、`sdf`和`labels`，并进行拼接。
+
+### 16.2 Tensor Shape Mismatch
+
+**问题**：
+`RuntimeError: stack expects each tensor to be equal size`。
+报错显示SDF tensor形状不匹配，例如`[1024, 1]` vs `[1024]`。
+
+**原因**：
+`.npz`文件中保存的SDF数据形状可能是`(N, 1)`，转换为torch tensor后依然保留了维度，而Labels是1D的`(N,)`。在`torch.stack`时维度不一致导致报错。
+
+**修复**：
+在转换为torch tensor时，强制使用`.flatten()`将SDF和Labels都展平为1D张量。
+
+### 16.3 Batch Collation Error (Near Points数量不一致)
+
+**问题**：
+`RuntimeError: stack expects each tensor to be equal size, but got [51018, 3] at entry 0 and [51020, 3] at entry 1`。
+
+**原因**：
+不同`.npz`文件的`near_points`数量不一致（约50k左右），导致`__getitem__`返回的张量长度不同，PyTorch默认的`collate_fn`无法将变长张量堆叠成batch。
+
+**修复**：
+修改采样逻辑，对`near_points`也进行固定数量采样（采样数 = `sdf_size // 4`），确保每个样本返回的点数完全一致。
+
+### 16.4 SDF Size与Model Input不匹配
+
+**问题**：
+`loss`计算时报错维度不匹配：`pred [2, 1024]` vs `target [2, 768]`。
+模型预期输入是拼接后的点云：`vol(1024) + near(1024) + surface(8192) = 10240`个点。
+但`dataset`配置为`sdf_size=1024`，导致只采样了`256+256=512`个vol/near点。
+
+**原因**：
+`main_ae.py`中写死了`sdf_size=1024`，而采样逻辑是`sdf_size // 4`。为了得到预期的1024个点，`sdf_size`应该设为4096。
+
+**修复**：
+在`main_ae.py`中将`sdf_size`从`1024`修改为`4096`。
+修正后的采样逻辑：
+- Vol points: `4096 // 4 = 1024`
+- Near points: `4096 // 4 = 1024`
+- Surface points: `8192` (from `point_cloud_size`)
+- Total points: `1024 + 1024 + 8192 = 10240`
+
+
