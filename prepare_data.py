@@ -181,47 +181,47 @@ def process_file(file_path, args):
         union_mesh = trimesh.Trimesh(vertices=all_v, faces=all_f)
         
         # ---------------------------------------------------------------------
-        # GENERATE POINTS - STRATIFIED SAMPLING
+        # GENERATE POINTS - STRATIFIED SAMPLING IN NORMALIZED SPACE
         # ---------------------------------------------------------------------
-        # Background ratio in original data: ~80%
-        # To boost small structure sampling, we use BALANCED stratified sampling:
-        # - 35% from background (down from 80%)
-        # - 65% from anatomical structures (up from 20%)
-        # This gives optimal balance: enough coverage for small structures (Coronary)
-        # while maintaining reasonable background sampling for overall geometry
+        # Instead of sampling in voxel space (which causes coordinate mismatch),
+        # we do stratified sampling in the SAME normalized space where meshes live
         
-        # Create union mask (any structure)
-        union_mask = (data > 0)
+        # Strategy:
+        # - 35% uniform random (background biased)
+        # - 65% sampled near/inside structures (using mesh bounds)
         
-        # Get coordinates of background and structure voxels
-        bg_coords = np.argwhere(~union_mask)  # Background
-        struct_coords = np.argwhere(union_mask)  # Any structure
+        n_bg = int(args.num_vol_points * 0.35)
+        n_struct = args.num_vol_points - n_bg
         
-        # Stratified sampling - BALANCED 35/65
-        n_bg = int(args.num_vol_points * 0.35)  # 35% from background
-        n_struct = args.num_vol_points - n_bg  # 65% from structures
+        # Background points: pure uniform random in [-1, 1]^3
+        vol_points_bg = np.random.uniform(-1, 1, (n_bg, 3)).astype(np.float32)
         
-        # Sample from background
-        if len(bg_coords) > 0:
-            bg_indices = np.random.choice(len(bg_coords), min(n_bg, len(bg_coords)), replace=False)
-            bg_samples = bg_coords[bg_indices]
-        else:
-            bg_samples = np.array([]).reshape(0, 3)
+        # Structure-biased points: sample within the bounding box of union mesh,
+        # then add some noise to also sample slightly outside
+        bounds = union_mesh.bounds  # [[min_x, min_y, min_z], [max_x, max_y, max_z]]
+        bbox_min = bounds[0]
+        bbox_max = bounds[1]
         
-        # Sample from structures
-        if len(struct_coords) > 0:
-            struct_indices = np.random.choice(len(struct_coords), min(n_struct, len(struct_coords)), replace=False)
-            struct_samples = struct_coords[struct_indices]
-        else:
-            struct_samples = np.array([]).reshape(0, 3)
+        # Expand bbox slightly (10%) to also sample near-structure regions
+        bbox_range = bbox_max - bbox_min
+        bbox_min_expanded = bbox_min - 0.1 * bbox_range
+        bbox_max_expanded = bbox_max + 0.1 * bbox_range
+        
+        # Clip to [-1, 1] bounds
+        bbox_min_expanded = np.maximum(bbox_min_expanded, -1.0)
+        bbox_max_expanded = np.minimum(bbox_max_expanded, 1.0)
+        
+        # Sample uniformly within expanded bbox
+        vol_points_struct = np.random.uniform(
+            bbox_min_expanded, 
+            bbox_max_expanded, 
+            (n_struct, 3)
+        ).astype(np.float32)
         
         # Combine
-        vol_points_voxel = np.vstack([bg_samples, struct_samples])
+        vol_points = np.vstack([vol_points_bg, vol_points_struct])
         
-        # Normalize to [-1, 1] using the same transform as surface points
-        vol_points = ((vol_points_voxel - shifts) * scale_factor).astype(np.float32)
-        
-        print(f"    Stratified sampling: {len(bg_samples)} bg + {len(struct_samples)} struct = {len(vol_points)} total")
+        print(f"    Stratified sampling (normalized space): {n_bg} bg + {n_struct} struct = {len(vol_points)} total")
         near_points = surface_points + np.random.normal(0, 0.01, surface_points.shape).astype(np.float32)
         near_points = np.clip(near_points, -1, 1)
 
@@ -262,15 +262,20 @@ def process_file(file_path, args):
         # Combine: Union SDF is minimum across all classes
         vol_sdf = np.min(vol_sdf_all, axis=1)
         
-        # CRITICAL FIX: Get labels directly from original voxel values
-        # Instead of deriving from SDF (which has threshold artifacts),
-        # we look up the original voxel value at each sampled point
+        # Assign labels based on SDF (mathematically consistent)
         vol_labels = np.zeros(len(vol_points), dtype=np.int8)
-        for i, voxel_coord in enumerate(vol_points_voxel):
-            x, y, z = voxel_coord.astype(int)
-            # Ensure within bounds
-            if 0 <= x < data.shape[0] and 0 <= y < data.shape[1] and 0 <= z < data.shape[2]:
-                vol_labels[i] = int(data[x, y, z])
+        
+        # Only assign labels where Union SDF says "inside"
+        is_inside_vol = vol_sdf < 0
+        
+        # For inside points, find the class with MOST NEGATIVE (deepest inside) SDF
+        for i in np.where(is_inside_vol)[0]:
+            class_sdfs = vol_sdf_all[i, :]
+            inside_classes = np.where(class_sdfs < 0)[0]
+            if len(inside_classes) > 0:
+                deepest_class = inside_classes[np.argmin(class_sdfs[inside_classes])]
+                vol_labels[i] = deepest_class + 1
+            # else: leave as 0 if no class thinks it's inside
         
         print(f"    Vol labels: {len(np.unique(vol_labels))} classes present")
         
