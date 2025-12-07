@@ -75,38 +75,38 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             points_all = torch.cat([points, surface[:, :, :3]], dim=1)
             outputs = model(surface, points_all)
 
-                output = output['o']
-                
-                # output: (B, N, 11) -> SDF (0), Labels (1..10)
-                # labels: (B, N, 2) -> SDF (0), LabelIdx (1)
-                
-                pred_sdf = output[:, :, 0]
-                pred_logits = output[:, :, 1:]
-                
-                target_sdf = labels[:, :, 0]
-                target_labels_idx = labels[:, :, 1].long()
-                
-                grad = points_gradient(points_all, output[:, :, 0:1]) # Grad of SDF channel only
+            output = outputs['o']
+            
+            # output: (B, N, 11) -> SDF (0), Labels (1..10)
+            # labels: (B, N, 2) -> SDF (0), LabelIdx (1)
+            
+            pred_sdf = output[:, :, 0]
+            pred_logits = output[:, :, 1:]
+            
+            target_sdf = labels[:, :, 0]
+            target_labels_idx = labels[:, :, 1].long()
+            
+            grad = points_gradient(points_all, output[:, :, 0:1]) # Grad of SDF channel only
 
-                loss_eikonal = (grad[:, :1024].norm(2, dim=-1) - 1).pow(2).mean() # Eikonal on Vol pts?
-                # Note: Vol points are first 1024?
-                # Objaverse returns cat([vol, near]). Vol is first.
-                
-                loss_vol = criterion(pred_sdf[:, :1024], target_sdf[:, :1024])
-                loss_near = criterion(pred_sdf[:, 1024:2048], target_sdf[:, 1024:2048])
-                loss_surface = (pred_sdf[:, 2048:]).abs().mean()
-                
-                # Classification Loss
-                # Background class (0) implicitly handled?
-                # If using BCEWithLogitsLoss(pred_logits, target_one_hot):
-                # We have 10 logits for classes 1-10.
-                # If label=0, target_one_hot is all zeros (good).
-                # If label=k, target_one_hot[k-1] = 1.
-                
-                target_one_hot = F.one_hot(target_labels_idx, num_classes=11)[:, :, 1:].float()
-                loss_cls = F.binary_cross_entropy_with_logits(pred_logits, target_one_hot)
+            loss_eikonal = (grad[:, :1024].norm(2, dim=-1) - 1).pow(2).mean() # Eikonal on Vol pts?
+            # Note: Vol points are first 1024?
+            # Objaverse returns cat([vol, near]). Vol is first.
+            
+            loss_vol = criterion(pred_sdf[:, :1024], target_sdf[:, :1024])
+            loss_near = criterion(pred_sdf[:, 1024:2048], target_sdf[:, 1024:2048])
+            loss_surface = (pred_sdf[:, 2048:]).abs().mean()
+            
+            # Classification Loss
+            # Background class (0) implicitly handled?
+            # If using BCEWithLogitsLoss(pred_logits, target_one_hot):
+            # We have 10 logits for classes 1-10.
+            # If label=0, target_one_hot is all zeros (good).
+            # If label=k, target_one_hot[k-1] = 1.
+            
+            target_one_hot = F.one_hot(target_labels_idx, num_classes=11)[:, :, 1:].float()
+            loss_cls = F.binary_cross_entropy_with_logits(pred_logits, target_one_hot)
 
-                loss = loss_vol + 50 * loss_near + 0.001 * loss_eikonal + 100 * loss_surface + 1.0 * loss_cls
+            loss = loss_vol + 50 * loss_near + 0.001 * loss_eikonal + 100 * loss_surface + 1.0 * loss_cls
 
 
         loss_value = loss.item()
