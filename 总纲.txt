@@ -261,3 +261,5 @@ sdf_predictions: (Batch, 2048)
 
 发现一个问题，test_vol_iou	恒等于0.
 调整数据集后发现训练还是停滞，改用run_phase1_sbatch_v2.sh，调高了学习率。
+
+修改了数据的生成方式，现在重启训练。

@@ -89,51 +89,61 @@ class Objaverse(data.Dataset):
         # surface_normals = torch.from_numpy(surface_normals).float()
 
         if self.sdf_sampling:
-            ### make sure balanced sampling, maybe not necessary when doing sdf regression
+            ### make sure balanced sampling
             pos_vol_id = (vol_sdf<0).reshape(-1)
 
+            # Sample positive (inside) points
             if pos_vol_id.sum() > 0:
                 replace = pos_vol_id.sum() < self.sdf_size//2
-                ind = np.random.default_rng().choice(pos_vol_id.sum(), self.sdf_size//2, replace=replace)
-                pos_vol_points = vol_points[pos_vol_id][ind]
-                pos_vol_sdf = vol_sdf[pos_vol_id][ind]
+                pos_ind = np.random.default_rng().choice(pos_vol_id.sum(), self.sdf_size//2, replace=replace)
+                pos_vol_points = vol_points[pos_vol_id][pos_ind]
+                pos_vol_sdf = vol_sdf[pos_vol_id][pos_ind]
+                pos_vol_labels = vol_labels[pos_vol_id][pos_ind]
             else:
-                # Fallback if no positive SDF points found in volume (unlikely but possible)
-                # Try near points
-                pos_vol_id = (near_sdf<0).reshape(-1)
-                if pos_vol_id.sum() > 0:
-                    replace = pos_vol_id.sum() < self.sdf_size//2
-                    ind = np.random.default_rng().choice(pos_vol_id.sum(), self.sdf_size//2, replace=replace)
-                    pos_vol_points = near_points[pos_vol_id][ind]
-                    pos_vol_sdf = near_sdf[pos_vol_id][ind]
-                else:
-                    # Fallback to random volume points
-                    ind = np.random.default_rng().choice(vol_points.shape[0], self.sdf_size//2, replace=True)
-                    pos_vol_points = vol_points[ind]
-                    pos_vol_sdf = vol_sdf[ind]
+                # Fallback to random sampling
+                pos_ind = np.random.default_rng().choice(vol_points.shape[0], self.sdf_size//2, replace=True)
+                pos_vol_points = vol_points[pos_ind]
+                pos_vol_sdf = vol_sdf[pos_ind]
+                pos_vol_labels = vol_labels[pos_ind]
 
+            # Sample negative (outside) points
             neg_vol_id = (vol_sdf>=0).reshape(-1)
             
             if neg_vol_id.sum() > 0:
                 replace = neg_vol_id.sum() < self.sdf_size//2
-                ind = np.random.default_rng().choice(neg_vol_id.sum(), self.sdf_size//2, replace=replace)
-                neg_vol_points = vol_points[neg_vol_id][ind]
-                neg_vol_sdf = vol_sdf[neg_vol_id][ind]
+                neg_ind = np.random.default_rng().choice(neg_vol_id.sum(), self.sdf_size//2, replace=replace)
+                neg_vol_points = vol_points[neg_vol_id][neg_ind]
+                neg_vol_sdf = vol_sdf[neg_vol_id][neg_ind]
+                neg_vol_labels = vol_labels[neg_vol_id][neg_ind]
             else:
-                 # Fallback
-                ind = np.random.default_rng().choice(vol_points.shape[0], self.sdf_size//2, replace=True)
-                neg_vol_points = vol_points[ind]
-                neg_vol_sdf = vol_sdf[ind]
-                near_sdf = torch.from_numpy(near_sdf).float()
-                near_labels = torch.from_numpy(near_labels).float()
+                # Fallback
+                neg_ind = np.random.default_rng().choice(vol_points.shape[0], self.sdf_size//2, replace=True)
+                neg_vol_points = vol_points[neg_ind]
+                neg_vol_sdf = vol_sdf[neg_ind]
+                neg_vol_labels = vol_labels[neg_ind]
+            
+            # Concatenate pos and neg samples
+            vol_points_sampled = np.concatenate([pos_vol_points, neg_vol_points], axis=0)
+            vol_sdf_sampled = np.concatenate([pos_vol_sdf, neg_vol_sdf], axis=0)
+            vol_labels_sampled = np.concatenate([pos_vol_labels, neg_vol_labels], axis=0)
+            
+            # Convert to torch
+            vol_points_sampled = torch.from_numpy(vol_points_sampled).float()
+            vol_sdf_sampled = torch.from_numpy(vol_sdf_sampled).float()
+            vol_labels_sampled = torch.from_numpy(vol_labels_sampled).long()
+            
+            near_points = torch.from_numpy(near_points).float()
+            near_sdf = torch.from_numpy(near_sdf).float()
+            near_labels = torch.from_numpy(near_labels).long()
 
-                points = torch.cat([vol_points, near_points], dim=0)
-                
-                # Stack SDF and Labels: (N, 2)
-                vol_target = torch.stack([vol_sdf, vol_labels.flatten()], dim=1)
-                near_target = torch.stack([near_sdf, near_labels.flatten()], dim=1)
-                
-                sdf = torch.cat([vol_target, near_target], dim=0)
+            # Concatenate vol and near
+            points = torch.cat([vol_points_sampled, near_points], dim=0)
+            
+            # Stack SDF and Labels: (N, 2)
+            vol_target = torch.stack([vol_sdf_sampled, vol_labels_sampled.float()], dim=1)
+            near_target = torch.stack([near_sdf, near_labels.float()], dim=1)
+            
+            sdf = torch.cat([vol_target, near_target], dim=0)
 
         if self.transform:
             # Note: transform usually expects (surface, points). 
