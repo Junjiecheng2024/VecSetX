@@ -87,14 +87,15 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             target_labels_idx = labels[:, :, 1].long()
             
             grad = points_gradient(points_all, output[:, :, 0:1]) # Grad of SDF channel only
-
-            loss_eikonal = (grad[:, :1024].norm(2, dim=-1) - 1).pow(2).mean() # Eikonal on Vol pts?
+            
+            # Eikonal only on Volume points (Pos + Neg = 2048)
+            loss_eikonal = (grad[:, :2048].norm(2, dim=-1) - 1).pow(2).mean() # Eikonal on Vol pts?
             # Note: Vol points are first 1024?
             # Objaverse returns cat([vol, near]). Vol is first.
             
-            loss_vol = criterion(pred_sdf[:, :1024], target_sdf[:, :1024])
-            loss_near = criterion(pred_sdf[:, 1024:2048], target_sdf[:, 1024:2048])
-            loss_surface = (pred_sdf[:, 2048:]).abs().mean()
+            loss_vol = criterion(pred_sdf[:, :2048], target_sdf[:, :2048])
+            loss_near = criterion(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072])
+            loss_surface = (pred_sdf[:, 3072:]).abs().mean()
             
             # Classification Loss
             # Background class (0) implicitly handled?
@@ -103,7 +104,12 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             # If label=0, target_one_hot is all zeros (good).
             # If label=k, target_one_hot[k-1] = 1.
             
-            target_one_hot = F.one_hot(target_labels_idx, num_classes=11)[:, :, 1:].float()
+            target_one_hot_query = F.one_hot(target_labels_idx, num_classes=11)[:, :, 1:].float()
+            # Concatenate surface labels (which are already one-hot in dims 3:13)
+            # Surface shape is (B, 8192, 13), labels at 3:13
+            target_one_hot_surface = surface[:, :, 3:]
+            
+            target_one_hot = torch.cat([target_one_hot_query, target_one_hot_surface], dim=1)
             loss_cls = F.binary_cross_entropy_with_logits(pred_logits, target_one_hot)
 
             loss = loss_vol + 50 * loss_near + 0.001 * loss_eikonal + 100 * loss_surface + 1.0 * loss_cls
@@ -113,8 +119,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         threshold = 0
 
-        vol_iou = calc_iou(pred_sdf[:, :1024], target_sdf[:, :1024], threshold)
-        near_iou = calc_iou(pred_sdf[:, 1024:2048], target_sdf[:, 1024:2048], threshold)
+        vol_iou = calc_iou(pred_sdf[:, :2048], target_sdf[:, :2048], threshold)
+        near_iou = calc_iou(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072], threshold)
         
         # Calculate Classification Accuracy
         # Pred Class = argmax(logits) + 1? Or threshold?
@@ -122,7 +128,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         # Let's use argmax over (0 vector, logits).
         pred_probs = torch.cat([torch.zeros_like(pred_logits[:, :, :1]), pred_logits], dim=2)
         pred_cls = torch.argmax(pred_probs, dim=2)
-        acc = (pred_cls == target_labels_idx).float().mean()
+        # Only compute accuracy on query points as target_labels_idx is for query only
+        acc = (pred_cls[:, :3072] == target_labels_idx).float().mean()
 
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
@@ -206,21 +213,31 @@ def evaluate(data_loader, model, device):
             # Validation logic
             # Objaverse returns 2048 points (Vol+Near)
             
-            loss_vol = criterion(pred_sdf[:, :1024], target_sdf[:, :1024])
-            loss_near = criterion(pred_sdf[:, 1024:2048], target_sdf[:, 1024:2048])
-            loss_surface = (pred_sdf[:, 2048:]).abs().mean()
+            loss_vol = criterion(pred_sdf[:, :2048], target_sdf[:, :2048])
+            loss_near = criterion(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072])
+            loss_surface = (pred_sdf[:, 3072:]).abs().mean()
             
-            target_one_hot = F.one_hot(target_labels_idx, num_classes=11)[:, :, 1:].float()
+            target_one_hot_query = F.one_hot(target_labels_idx, num_classes=11)[:, :, 1:].float()
+            target_one_hot_surface = surface[:, :, 3:]
+            target_one_hot = torch.cat([target_one_hot_query, target_one_hot_surface], dim=1)
+            
             loss_cls = F.binary_cross_entropy_with_logits(pred_logits, target_one_hot)
             
             loss = loss_vol + 10 * loss_near + 10 * loss_surface + loss_cls
 
             pred_probs = torch.cat([torch.zeros_like(pred_logits[:, :, :1]), pred_logits], dim=2)
             pred_cls = torch.argmax(pred_probs, dim=2)
-            acc = (pred_cls == target_labels_idx).float().mean()
             
-            vol_iou = calc_iou(pred_sdf[:, :1024], target_sdf[:, :1024], 0)
-            near_iou = calc_iou(pred_sdf[:, 1024:2048], target_sdf[:, 1024:2048], 0)
+            # Accuracy calculation needs to align with flattened targets or specific subset
+            # Here we just compare query part for simplicity or we can expand
+            # target_labels_idx is only for query points.
+            # pred_cls is full. Let's compute accuracy for query points only for now?
+            # Or construct full index targets?
+            # For simplicity, let's just use query part for acc
+            acc = (pred_cls[:, :3072] == target_labels_idx).float().mean()
+            
+            vol_iou = calc_iou(pred_sdf[:, :2048], target_sdf[:, :2048], 0)
+            near_iou = calc_iou(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072], 0)
 
         metric_logger.update(loss=loss.item())
         metric_logger.update(loss_vol=loss_vol.item())
