@@ -115,8 +115,8 @@ def main(args):
     torch.manual_seed(seed)
     np.random.seed(seed)
 
-    dataset_train = Objaverse(split='train', sdf_sampling=True, sdf_size=1024, surface_sampling=True, surface_size=args.point_cloud_size, dataset_folder=args.data_path)
-    dataset_val = Objaverse(split='val', sdf_sampling=True, sdf_size=1024, surface_sampling=True, surface_size=args.point_cloud_size, dataset_folder=args.data_path)
+    dataset_train = Objaverse(split='train', sdf_sampling=True, sdf_size=4096, surface_sampling=True, surface_size=args.point_cloud_size, dataset_folder=args.data_path)
+    dataset_val = Objaverse(split='val', sdf_sampling=True, sdf_size=4096, surface_sampling=True, surface_size=args.point_cloud_size, dataset_folder=args.data_path)
 
     if True:  # args.distributed:
         num_tasks = misc.get_world_size()
