@@ -127,14 +127,14 @@ class Objaverse(data.Dataset):
             vol_sdf_sampled = np.concatenate([pos_vol_sdf, neg_vol_sdf], axis=0)
             vol_labels_sampled = np.concatenate([pos_vol_labels, neg_vol_labels], axis=0)
             
-            # Convert to torch
+            # Convert to torch and ensure correct shapes
             vol_points_sampled = torch.from_numpy(vol_points_sampled).float()
-            vol_sdf_sampled = torch.from_numpy(vol_sdf_sampled).float()
-            vol_labels_sampled = torch.from_numpy(vol_labels_sampled).long()
+            vol_sdf_sampled = torch.from_numpy(vol_sdf_sampled).float().flatten()  # Ensure 1D
+            vol_labels_sampled = torch.from_numpy(vol_labels_sampled).long().flatten()  # Ensure 1D
             
             near_points = torch.from_numpy(near_points).float()
-            near_sdf = torch.from_numpy(near_sdf).float()
-            near_labels = torch.from_numpy(near_labels).long()
+            near_sdf = torch.from_numpy(near_sdf).float().flatten()  # Ensure 1D
+            near_labels = torch.from_numpy(near_labels).long().flatten()  # Ensure 1D
 
             # Concatenate vol and near
             points = torch.cat([vol_points_sampled, near_points], dim=0)
