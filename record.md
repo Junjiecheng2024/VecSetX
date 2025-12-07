@@ -1473,7 +1473,224 @@ sbatch run_phase1_sbatch_v2.sh
 5.  **`vecset/models/utils.py`**：将手动 Attention 替换为 PyTorch 优化的 `F.scaled_dot_product_attention`，提升显存效率。
 6.  **`check_data_quality.py`**：新增工具，专门用于验证 SDF 正负比与 Label 一致性。
 
+
 ### 13.5 下一步计划
 1.  使用新脚本全量生成训练数据。
 2.  使用 `check_data_quality.py` 抽检。
 3.  启动 Phase 1 Multi-Class 训练。
+
+---
+
+## 14. Multi-Class Data Generation - Complete Debugging Journey (2025-12-06~07)
+
+### 14.1 背景与目标
+为VecSetX多类别训练生成高质量数据集（998个样本，10个心脏结构类别）。
+
+**核心要求**：
+- SDF平衡：Volume ~50%, Near ~50%
+- Label-Geometry一致性：接近100%
+- 类别覆盖：所有样本包含全部10个类别
+- **特别保证Coronary（创新点）的采样质量**
+
+---
+
+### 14.2 问题1: SDF Balance异常
+
+**现象**：Vol Pos分布严重失衡
+- `vol_threshold=0.33` → Vol Pos = 0%
+- `vol_threshold=1.2` → Vol Pos = 99%
+
+**根本原因**：
+Depth ratio heuristic的threshold参数对inside/outside判断影响极大。
+
+**解决方案**：
+实验确定 `vol_threshold=0.85` 能得到~50% Vol Pos。
+
+---
+
+### 14.3 问题2: 类别缺失
+
+**现象**：
+```
+Surface labels: 10 classes ✅
+Vol labels: 8 classes (missing [1, 3]) ❌
+```
+
+**根本原因**：
+Depth ratio heuristic对薄壁结构（Myocardium, LV）判断不准，即使点在该类别体素内，SDF却判为outside。
+
+**解决方案**：
+尝试直接从voxel读取label，但引入了coordinate mismatch问题（见问题4）。
+
+---
+
+### 14.4 问题3: Coronary采样不足
+
+**问题分析**：
+- Coronary体积占比：0.12%
+- 随机采样50k点：理论仅60个点
+- 严重不足以学习该结构
+
+**初步方案**：Stratified Sampling
+- 背景35% (17.5k), 结构65% (32.5k)
+- 理论提升Coronary采样至~200点
+- 但引入了严重的consistency问题...
+
+---
+
+### 14.5 问题4: Stratified Sampling导致Label-SDF严重不一致 ⚠️⚠️⚠️
+
+**灾难性现象**：
+```
+Consistency: 52.7% (应该接近100%) ❌❌❌
+Outside (SDF>=0) but has class label: 36.9%
+```
+
+**Stratified实现方式（有问题）**：
+```python
+# 1. 在voxel整数空间stratified采样
+vol_points_voxel = sample_from_voxel_grid(data)
+
+# 2. 从voxel直接读label
+vol_labels[i] = data[x, y, z]  # voxel space
+
+# 3. Transform到normalized空间
+vol_points = transform(vol_points_voxel)  # normalized space
+
+# 4. 计算SDF
+vol_sdf = compute_sdf(vol_points, normalized_mesh)  # normalized space
+```
+
+**根本原因：Coordinate Space Mismatch**
+- Labels在**voxel整数坐标空间**分配
+- SDF在**normalized连续坐标空间**计算
+- Transform在边界处有微小误差
+- 导致：voxel说"inside"，normalized SDF说"outside"
+
+**调试证据**：
+```
+Outside but has class label:
+  Point 17502: SDF=0.0157, Label=6  ← 刚好在边界外0.01
+  Point 17503: SDF=0.0227, Label=1
+```
+
+36.9%的高比例是因为stratified故意在结构边界密集采样！
+
+---
+
+### 14.6 最终解决方案：Normalized Space Stratified Sampling ✅
+
+**核心思想**：
+**在同一个坐标空间（normalized space）完成所有操作**
+
+**实现**：
+```python
+# 1. 背景点：从整个[-1,1]³均匀采样
+vol_points_bg = np.random.uniform(-1, 1, (n_bg, 3))
+
+# 2. 结构点：从union mesh的bounding box采样（已在normalized space）
+bounds = union_mesh.bounds
+bbox_expanded = expand_bbox(bounds, factor=1.1)
+vol_points_struct = np.random.uniform(bbox_min, bbox_max, (n_struct, 3))
+
+# 3. 在同一空间计算SDF
+vol_sdf = compute_sdf(vol_points, normalized_mesh)
+
+# 4. 从SDF推导label（数学严格一致）
+vol_labels = derive_from_sdf(vol_sdf_all)
+```
+
+**优势**：
+- ✅ 空间一致性：采样、SDF、labels都在normalized space
+- ✅ 数学一致性：Label严格由SDF推导，100%一致
+- ✅ 结构覆盖：65%点在结构bbox内，小结构采样提升
+- ✅ 避免coordinate transform误差
+
+---
+
+### 14.7 问题5: 数据生成速度优化
+
+**原始性能**：
+- 单文件：50-60秒
+- 998文件串行：~14小时
+- CPU利用率：<30% (256核系统)
+
+**优化历程**：
+
+**阶段1：Per-Class Parallelization**
+- 10个类别的SDF并行计算
+- 提升：~2-3倍
+
+**阶段2：File-Level Parallelization**
+- 同时处理多个文件
+- 遇到Nested Pool问题：daemon进程不能spawn子进程
+
+**解决方案**：
+```python
+if file_workers > 1:
+    use_parallel = False  # 禁用文件内并行
+else:
+    use_parallel = True   # 启用per-class并行
+```
+
+**最终配置**：
+```bash
+--file_workers 32  # 32文件并行
+--n_workers 1      # 文件内串行
+```
+
+**最终速度**：998文件 ~**30分钟** (从14小时优化到30分钟！)
+
+---
+
+### 14.8 问题6: check_data_quality.py误报
+
+**现象**：
+报告24%不一致，但实际100%一致
+
+**原因**：
+```python
+# ❌ 错误
+inside = vol_sdf < -1e-4  # 应该是0
+
+# ✅ 正确
+inside = vol_sdf < 0
+```
+
+**修复**：
+将检查脚本的阈值改为SDF=0，与label分配逻辑一致。
+
+---
+
+### 14.9 最终配置 & 预期质量
+
+**生成命令**：
+```bash
+python prepare_data.py \
+    --input_dir /scratch/project_2016517/junjie/dataset/repaired_shape \
+    --output_dir /scratch/project_2016517/junjie/dataset/repaired_npz \
+    --vol_threshold 0.85 \
+    --file_workers 32
+```
+
+**预期质量**：
+- SDF Balance: Vol ~55%, Near ~52%
+- Label Consistency: ~100%
+- Class Coverage: Surface 100%, Vol 可能8-10类
+- 生成时间: ~30分钟 (998文件)
+
+---
+
+### 14.10 核心教训
+
+1. **坐标空间一致性至关重要**：同一空间操作避免transform误差
+2. **Heuristic需empirical validation**：depth ratio对薄壁结构不准
+3. **数据检查必须与生成逻辑一致**：阈值必须匹配
+4. **避免嵌套并行**：file-level和task-level并行二选一
+5. **Stratified sampling是双刃剑**：提升覆盖但实现复杂
+
+**关键文件**：
+- `prepare_data.py`: 最终优化版本
+- `check_data_quality.py`: 汇总统计
+- `debug_consistency.py`: 详细诊断
+- `verify_all_classes.py`: 类别覆盖验证
