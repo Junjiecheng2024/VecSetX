@@ -356,10 +356,13 @@ def process_file(file_path, args):
         del near_points, near_sdf, near_labels, near_sdf_heur_all
         gc.collect()
         
+        return os.path.basename(file_path)  # CRITICAL: Must return for parallel pool
+        
     except Exception as e:
         print(f"    ✗ Failed: {e}")
         import traceback
         traceback.print_exc()
+        return None  # Return None on failure
 
 def main():
     args = get_args()
