@@ -81,16 +81,21 @@ class Attention(nn.Module):
         k = kv[:, :, 0]
         v = kv[:, :, 1]
         
-        # SDPA expects (batch, heads, seq_len, dim)
-        q_t = q.transpose(1, 2)
-        k_t = k.transpose(1, 2)
-        v_t = v.transpose(1, 2)
+        # Manual Attention Implementation (Fix for SDPA backward error)
+        # q, k, v are (b, n, h, d)
         
-        # Use optimized PyTorch SDPA
-        out = F.scaled_dot_product_attention(q_t, k_t, v_t, dropout_p=0.0, is_causal=False)
-        
-        # Transpose back to (batch, seq_len, heads, dim)
-        out = out.transpose(1, 2)
+        # (b, heads, n, n)
+        dots = einsum('b i h d, b j h d -> b h i j', q, k) * self.scale
+
+        if exists(mask):
+             mask_value = -torch.finfo(dots.dtype).max
+             mask = repeat(mask, 'b j -> b h i j', h=h, i=n)
+             dots.masked_fill_(~mask, mask_value)
+
+        attn = dots.softmax(dim=-1)
+
+        # (b, n, h, d)
+        out = einsum('b h i j, b j h d -> b i h d', attn, v)
 
         return self.to_out(rearrange(out, 'b n h d -> b n (h d)'))
 
