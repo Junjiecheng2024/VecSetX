@@ -1916,3 +1916,47 @@ python process_missing.py
 - Total points: `1024 + 1024 + 8192 = 10240`
 
 
+
+## 11. 此轮集群训练调试记录 (Cluster Training Debugging) [Dec 7, 2025]
+
+在本次将代码部署到集群并启动训练的过程中，我们连续克服了三个关键的技术障碍，通过远程调试成功启动了大规模训练。
+
+### 11.1 模块导入与初始化崩溃 (ModuleNotFoundError & Silent Crash)
+
+*   **症状**: 训练任务立即失败 (Exit Code 1)，没有任何有用的报错信息。日志中仅包含 `torchrun` 的通用错误堆栈。
+*   **原因**: 
+    1.  `vecset` 包在集群环境中未被正确识别为 Python 包，导致 `import vecset.utils.objaverse` 失败。
+    2.  `main_ae.py` 缺乏对 Dataset 初始化和 WandB 登录的异常捕获，导致进程在打印任何日志前就崩愤了。
+*   **修复**:
+    *   **相对导入**: 将 import 路径从 absolutel (`vecset.utils...`) 改为 relative/local (`utils...`)，适配当前的 PYTHONPATH 结构。
+    *   **防御性编程**: 在 `main_ae.py` 中添加了详细的 `try-except` 块及显式的 `print` 日志，确保即使初始化失败也能看到具体原因。
+    *   **环境检查**: 添加了对 data_path 和 CSV 文件的显式存在性检查。
+
+### 11.2 Loss计算维度不匹配 (ValueError: Shape Mismatch)
+
+*   **症状**: `ValueError: Target size (torch.Size([2, 3072, 10])) must be the same as input size (torch.Size([2, 11264, 10]))`。
+*   **原因**: 
+    1.  **索引硬编码失效**: `dataset` 配置为 `sdf_size=4096`，实际产生了 3072 个查询点 (1024 Pos + 1024 Neg + 1024 Near)。但 `engine_ae.py` 中沿用了旧的硬编码索引 (0:1024 Vol, 1024:2048 Near)，导致 loss 计算错位。
+    2.  **分类目标缺失**: `loss_cls` (Binary Cross Entropy) 计算时，模型输出了所有点 (Query + Surface = 11264) 的 logits，但 Target 仅包含 Query 部分的标签 (3072)，导致维度不匹配。
+*   **修复**:
+    *   **动态索引**: 修正 `loss_vol` 取 `[:2048]` (包含 Pos+Neg)，`loss_near` 取 `[2048:3072]`，`loss_surface` 取 `[3072:]`。
+    *   **目标拼接**: 构建 `target_one_hot` 时，将 Query 的标签与 Surface 的标签在 dim=1 维度上拼接，构造出完整的 (B, 11264, 10) 目标张量。
+
+### 11.3 Attention 反向传播失败 (RuntimeError: SDPA Backward)
+
+*   **症状**: `RuntimeError: derivative for aten::_scaled_dot_product_efficient_attention_backward is not implemented`。
+*   **原因**: PyTorch 的 `F.scaled_dot_product_attention` (SDPA) 算子在集群的 A100 环境下，配合当前的 head_dim 和 tensor layout，未能自动选择支持反向传播的 kernel (使用了 efficient_attention 但其 backward 未被支持)。
+*   **修复**:
+    *   **回退手动实现**: 在 `vecset/models/utils.py` 中，用标准的 `torch.einsum` 手动实现了 Scaled Dot-Product Attention。
+    *   **权衡**: 虽然牺牲了少量显存和计算效率，但彻底解决了兼容性问题，保证了梯度的正确回传。
+
+### 11.4 最终状态
+
+经过上述修复，`rank3` 等所有进程已成功进入 Training Loop：
+```text
+base lr: 2.00e-04
+accumulate grad iterations: 8
+effective batch size: 64
+Start training for 400 epochs
+```
+模型正在稳定训练中。
