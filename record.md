@@ -1694,3 +1694,167 @@ python prepare_data.py \
 - `check_data_quality.py`: 汇总统计
 - `debug_consistency.py`: 详细诊断
 - `verify_all_classes.py`: 类别覆盖验证
+
+---
+
+## 15. 数据生成性能优化与并行化问题 (2025-12-07)
+
+### 15.1 并行化失败的根本原因
+
+**问题现象**：
+- 设置`--file_workers 64`，但速度没有提升
+- CPU使用率很低（~1%），看起来完全串行
+- 998个文件生成耗时12+小时
+
+**根本原因**：
+`process_file`函数缺少return语句，导致`pool.imap_unordered`无法正常工作：
+
+```python
+# ❌ 错误的实现
+def process_file(file_path, args):
+    # ... 处理逻辑 ...
+    gc.collect()
+    # 没有return！
+
+# Pool等不到返回值，hang住
+with Pool(processes=file_workers) as pool:
+    for i, result in enumerate(pool.imap_unordered(process_func, files)):
+        # 这个循环永远不会正常迭代
+```
+
+**修复方案**：
+```python
+# ✅ 正确的实现
+def process_file(file_path, args):
+    # ... 处理逻辑 ...
+    gc.collect()
+    return os.path.basename(file_path)  # 必须返回值
+```
+
+---
+
+### 15.2 性能瓶颈分析
+
+即使修复了并行bug，仍然存在性能问题：
+
+**主要瓶颈：mesh_to_sdf**
+- 每个文件需要调用`mesh_to_sdf`计算50k near points的精确SDF
+- **单文件耗时：60-90秒**
+- mesh_to_sdf内部是单线程的，无法进一步并行
+- CPU使用率低（12.5%）是因为算法本身限制
+
+**实际性能**：
+```
+16 file_workers × 60秒/文件 = 每批16个文件需要60秒
+998文件总计 ≈ 60-90分钟
+```
+
+---
+
+### 15.3 手动多终端并行方案
+
+如果自动并行太慢，可以手动开多个终端并行处理：
+
+#### 方案1：按索引范围分配（8个终端）
+
+```bash
+# 终端1
+python prepare_data.py \
+    --input_dir /scratch/project_2016517/junjie/dataset/repaired_shape \
+    --output_dir /scratch/project_2016517/junjie/dataset/repaired_npz \
+    --vol_threshold 0.85 \
+    --file_workers 1 \
+    --start_idx 0 --end_idx 125
+
+# 终端2
+python prepare_data.py ... --start_idx 125 --end_idx 250
+
+# 终端3-8类似，每个处理125个文件
+```
+
+**注意**：`--file_workers 1`避免nested parallelism
+
+####  方案2：只处理缺失文件
+
+```bash
+# 1. 找出缺失文件
+python process_missing.py
+# 自动创建symlink到 /scratch/.../missing_files_temp
+
+# 2. 手动分批处理
+# 将50个缺失文件分成5批，每批10个，5个终端并行
+```
+
+#### 方案3：使用screen批量管理
+
+```bash
+# 创建8个screen会话
+for i in {1..8}; do screen -dmS data_gen_$i; done
+
+# 在每个会话中运行
+screen -S data_gen_1 -X stuff "python prepare_data.py --start_idx 0 --end_idx 125\n"
+screen -S data_gen_2 -X stuff "python prepare_data.py --start_idx 125 --end_idx 250\n"
+
+# 查看进度
+screen -r data_gen_1
+```
+
+---
+
+### 15.4 数据质量最终报告
+
+**SDF Balance**：
+- Vol Pos: 51.3% ± 11.0% ✅
+- Near Pos: 52.9% ± 0.7% ✅ 完美
+
+**Label Consistency**: 100.0% ✅
+
+**Class Coverage (Vol)**：
+- 10类：40.9%
+- 9类：42.7%（主要缺LV）
+- 8类：15.4%（缺LV+LA）
+
+**缺失类别**：
+- LV: 44.9%文件缺失 ⚠️
+- LA: 25.1%文件缺失 ⚠️
+- Coronary: 0.1%缺失 ✅ 创新点保障
+
+---
+
+### 15.5 后续改进（如训练效果不佳）
+
+**如果LV/LA重建差**：
+```python
+# 方案1: Loss权重调整
+loss = loss_surface * 3 + loss_near * 10 + loss_vol * 1
+
+# 方案2: 降低vol_threshold
+--vol_threshold 0.75  # 从0.85降到0.75
+```
+
+**如果mesh_to_sdf太慢**：
+```python
+# 降低精度换速度
+mesh_to_sdf.mesh_to_sdf(..., scan_count=50, scan_resolution=200)
+# 速度提升2倍
+```
+
+---
+
+### 15.6 关键工具脚本
+
+```bash
+# 质量检查
+python check_data_quality.py <npz_dir>
+python debug_consistency.py <file.npz>
+python analyze_missing_classes.py <npz_dir>
+
+# 找缺失文件
+python process_missing.py
+```
+
+**最终配置**：
+- vol_threshold: 0.85
+- file_workers: 16
+- Stratified sampling: 35bg/65struct (normalized space)
+- 总耗时: 1-2小时（998文件）
