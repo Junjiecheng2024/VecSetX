@@ -90,18 +90,20 @@ class Objaverse(data.Dataset):
 
         if self.sdf_sampling:
             ### make sure balanced sampling
+            # Training code expects 1024 vol + 1024 near = 2048 total
+            # So we sample sdf_size//4 for each (4096//4 = 1024)
             pos_vol_id = (vol_sdf<0).reshape(-1)
 
             # Sample positive (inside) points
             if pos_vol_id.sum() > 0:
-                replace = pos_vol_id.sum() < self.sdf_size//2
-                pos_ind = np.random.default_rng().choice(pos_vol_id.sum(), self.sdf_size//2, replace=replace)
+                replace = pos_vol_id.sum() < self.sdf_size//4
+                pos_ind = np.random.default_rng().choice(pos_vol_id.sum(), self.sdf_size//4, replace=replace)
                 pos_vol_points = vol_points[pos_vol_id][pos_ind]
                 pos_vol_sdf = vol_sdf[pos_vol_id][pos_ind]
                 pos_vol_labels = vol_labels[pos_vol_id][pos_ind]
             else:
                 # Fallback to random sampling
-                pos_ind = np.random.default_rng().choice(vol_points.shape[0], self.sdf_size//2, replace=True)
+                pos_ind = np.random.default_rng().choice(vol_points.shape[0], self.sdf_size//4, replace=True)
                 pos_vol_points = vol_points[pos_ind]
                 pos_vol_sdf = vol_sdf[pos_ind]
                 pos_vol_labels = vol_labels[pos_ind]
@@ -110,14 +112,14 @@ class Objaverse(data.Dataset):
             neg_vol_id = (vol_sdf>=0).reshape(-1)
             
             if neg_vol_id.sum() > 0:
-                replace = neg_vol_id.sum() < self.sdf_size//2
-                neg_ind = np.random.default_rng().choice(neg_vol_id.sum(), self.sdf_size//2, replace=replace)
+                replace = neg_vol_id.sum() < self.sdf_size//4
+                neg_ind = np.random.default_rng().choice(neg_vol_id.sum(), self.sdf_size//4, replace=replace)
                 neg_vol_points = vol_points[neg_vol_id][neg_ind]
                 neg_vol_sdf = vol_sdf[neg_vol_id][neg_ind]
                 neg_vol_labels = vol_labels[neg_vol_id][neg_ind]
             else:
                 # Fallback
-                neg_ind = np.random.default_rng().choice(vol_points.shape[0], self.sdf_size//2, replace=True)
+                neg_ind = np.random.default_rng().choice(vol_points.shape[0], self.sdf_size//4, replace=True)
                 neg_vol_points = vol_points[neg_ind]
                 neg_vol_sdf = vol_sdf[neg_ind]
                 neg_vol_labels = vol_labels[neg_ind]
@@ -130,11 +132,11 @@ class Objaverse(data.Dataset):
             # Sample fixed number of near points to ensure consistent batch sizes
             # near_points usually has ~50k points, we need exactly sdf_size//2 (1024)
             n_near_points = near_points.shape[0]
-            if n_near_points >= self.sdf_size//2:
-                near_indices = np.random.default_rng().choice(n_near_points, self.sdf_size//2, replace=False)
+            if n_near_points >= self.sdf_size//4:
+                near_indices = np.random.default_rng().choice(n_near_points, self.sdf_size//4, replace=False)
             else:
                 # If not enough, sample with replacement
-                near_indices = np.random.default_rng().choice(n_near_points, self.sdf_size//2, replace=True)
+                near_indices = np.random.default_rng().choice(n_near_points, self.sdf_size//4, replace=True)
             
             near_points_sampled = near_points[near_indices]
             near_sdf_sampled = near_sdf[near_indices]
