@@ -127,21 +127,34 @@ class Objaverse(data.Dataset):
             vol_sdf_sampled = np.concatenate([pos_vol_sdf, neg_vol_sdf], axis=0)
             vol_labels_sampled = np.concatenate([pos_vol_labels, neg_vol_labels], axis=0)
             
+            # Sample fixed number of near points to ensure consistent batch sizes
+            # near_points usually has ~50k points, we need exactly sdf_size//2 (1024)
+            n_near_points = near_points.shape[0]
+            if n_near_points >= self.sdf_size//2:
+                near_indices = np.random.default_rng().choice(n_near_points, self.sdf_size//2, replace=False)
+            else:
+                # If not enough, sample with replacement
+                near_indices = np.random.default_rng().choice(n_near_points, self.sdf_size//2, replace=True)
+            
+            near_points_sampled = near_points[near_indices]
+            near_sdf_sampled = near_sdf[near_indices]
+            near_labels_sampled = near_labels[near_indices]
+            
             # Convert to torch and ensure correct shapes
             vol_points_sampled = torch.from_numpy(vol_points_sampled).float()
             vol_sdf_sampled = torch.from_numpy(vol_sdf_sampled).float().flatten()  # Ensure 1D
             vol_labels_sampled = torch.from_numpy(vol_labels_sampled).long().flatten()  # Ensure 1D
             
-            near_points = torch.from_numpy(near_points).float()
-            near_sdf = torch.from_numpy(near_sdf).float().flatten()  # Ensure 1D
-            near_labels = torch.from_numpy(near_labels).long().flatten()  # Ensure 1D
+            near_points_sampled = torch.from_numpy(near_points_sampled).float()
+            near_sdf_sampled = torch.from_numpy(near_sdf_sampled).float().flatten()  # Ensure 1D
+            near_labels_sampled = torch.from_numpy(near_labels_sampled).long().flatten()  # Ensure 1D
 
-            # Concatenate vol and near
-            points = torch.cat([vol_points_sampled, near_points], dim=0)
+            # Concatenate vol and near (now both are sdf_size//2 = 1024 points each)
+            points = torch.cat([vol_points_sampled, near_points_sampled], dim=0)
             
             # Stack SDF and Labels: (N, 2)
             vol_target = torch.stack([vol_sdf_sampled, vol_labels_sampled.float()], dim=1)
-            near_target = torch.stack([near_sdf, near_labels.float()], dim=1)
+            near_target = torch.stack([near_sdf_sampled, near_labels_sampled.float()], dim=1)
             
             sdf = torch.cat([vol_target, near_target], dim=0)
 
