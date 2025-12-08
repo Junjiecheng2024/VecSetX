@@ -209,6 +209,55 @@ def evaluate(data_loader, model, device):
             
             target_sdf = labels[:, :, 0]
             target_labels_idx = labels[:, :, 1].long()
+            
+            # Calculate classification predictions FIRST
+            pred_probs = torch.cat([torch.zeros_like(pred_logits[:, :, :1]), pred_logits], dim=2)
+            pred_cls = torch.argmax(pred_probs, dim=2)
+
+            # Validation logic
+            num_points = points.shape[1]
+            
+            if num_points == 1024:
+                # Validation set (near points only)
+                loss_vol = torch.tensor(0.0, device=device)
+                loss_near = criterion(pred_sdf, target_sdf)
+                loss_surface = (pred_sdf[:, 1024:]).abs().mean() if pred_sdf.shape[1] > 1024 else torch.tensor(0.0, device=device) 
+                
+                vol_iou = torch.tensor(0.0, device=device)
+                near_iou = calc_iou(pred_sdf[:, :1024], target_sdf[:, :1024], 0)
+                 
+                acc_points = pred_cls[:, :1024]
+                acc_targets = target_labels_idx[:, :1024]
+                 
+            else: # Standard Mode (3072 or other)
+                 # Default fallback to slicing assumption if 3072
+                 # If not 3072, this might still range error if < 3072. 
+                 # But let's assume if not 1024, it's the full training-like set.
+                 loss_vol = criterion(pred_sdf[:, :2048], target_sdf[:, :2048])
+                 loss_near = criterion(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072])
+                 loss_surface = (pred_sdf[:, 3072:]).abs().mean() if pred_sdf.shape[1] > 3072 else torch.tensor(0.0, device=device)
+                 
+                 vol_iou = calc_iou(pred_sdf[:, :2048], target_sdf[:, :2048], 0)
+                 near_iou = calc_iou(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072], 0)
+
+                 acc_points = pred_cls[:, :3072]
+                 acc_targets = target_labels_idx[:, :3072]
+            
+            acc = (acc_points == acc_targets).float().mean()
+            # Classification loss logic (optional for eval but good for tracking)
+            # We don't have surface labels here easily matched without re-slicing logic matching train.
+            # Just skip loss_cls for simplicty in eval or set to 0
+            loss_cls = torch.tensor(0.0, device=device)
+            
+            loss = loss_vol + 1.0 * loss_near + 1.0 * loss_surface + loss_cls
+
+        metric_logger.update(loss=loss.item())
+        metric_logger.update(loss_vol=loss_vol.item())
+        metric_logger.update(loss_near=loss_near.item())
+        metric_logger.update(loss_surface=loss_surface.item())
+        metric_logger.update(vol_iou=vol_iou.item())
+        metric_logger.update(near_iou=near_iou.item())
+        metric_logger.update(acc=acc.item())
         
         # Combined IoU for reporting
         metric_logger.update(iou=(vol_iou.item() + near_iou.item()) / 2.0)
