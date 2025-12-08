@@ -14,10 +14,10 @@ import utils.lr_sched as lr_sched
 
 def calc_iou(output, labels, threshold):
     target = torch.zeros_like(labels)
-    target[labels>=threshold] = 1
+    target[labels<threshold] = 1
     
     pred = torch.zeros_like(output)
-    pred[output>=threshold] = 1
+    pred[output<threshold] = 1
 
     accuracy = (pred==target).float().sum(dim=1) / target.shape[1]
     accuracy = accuracy.mean()
@@ -112,7 +112,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             target_one_hot = torch.cat([target_one_hot_query, target_one_hot_surface], dim=1)
             loss_cls = F.binary_cross_entropy_with_logits(pred_logits, target_one_hot)
 
-            loss = loss_vol + 50 * loss_near + 0.001 * loss_eikonal + 100 * loss_surface + 1.0 * loss_cls
+            loss = loss_vol + 10 * loss_near + 0.001 * loss_eikonal + 10 * loss_surface + 1.0 * loss_cls
 
 
         loss_value = loss.item()
@@ -211,33 +211,150 @@ def evaluate(data_loader, model, device):
             target_labels_idx = labels[:, :, 1].long()
             
             # Validation logic
-            # Objaverse returns 2048 points (Vol+Near)
+            # Dynamically detect point count
+            num_points = points.shape[1]
             
-            loss_vol = criterion(pred_sdf[:, :2048], target_sdf[:, :2048])
-            loss_near = criterion(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072])
-            loss_surface = (pred_sdf[:, 3072:]).abs().mean()
+            if num_points == 1024:
+                # Validation set (near points only)
+                loss_vol = torch.tensor(0.0, device=device)
+                loss_near = criterion(pred_sdf, target_sdf)
+                loss_surface = (pred_sdf[:, 1024:]).abs().mean() if pred_sdf.shape[1] > 1024 else torch.tensor(0.0, device=device) # Handle case if surface not predicted? 
+                # Wait, output shape depends on model. Model outputs same N as input points.
+                # If input is 1024 points. Output is 1024 SDFs.
+                # But wait, surface points are separate inputs?
+                # "points_all = torch.cat([points, surface[:, :, :3]], dim=1)" (Line 202)
+                # Model outputs SDF for ALL points?
+                # Line 203: outputs = model(surface, points_all)
+                # Line 76 (Train): points_all = cat([points, surface]) -> 2048 + 8192? No.
+                # Check model forward.
+                
+                # In Train:
+                # points is 3072 (2048 vol+near + ?).
+                # No, Train loader returns 2048 points (Vol+Near).
+                # points_all = cat([points, surface_coords]) -> 2048 + 8192 query points?
+                # output = model(points_all) -> returns SDF for all?
+                
+                # Let's look at `train_one_epoch` slicing:
+                # pred_sdf[:, :2048] -> Vol
+                # pred_sdf[:, 2048:3072] -> Near
+                # pred_sdf[:, 3072:] -> Surface
+                
+                # So `points` has 3072?
+                # Objaverse.__getitem__ returns `points` (2048).
+                # But where does 3072 come from?
+                # Ah, `points_all` includes `surface` (8192 points?).
+                # If surface is 8192, indices 3072+?
+                
+                # Let's re-read Train Loop (Line 75):
+                # points_all = torch.cat([points, surface[:, :, :3]], dim=1)
+                # If points=2048, surface=8192. Total = 10240.
+                # Line 96: loss_vol = ... pred_sdf[:, :2048]
+                # Line 97: loss_near = ... pred_sdf[:, 2048:3072]
+                # Wait, 2048:3072 implies 1024 points.
+                # But `points` (from loader) is 2048.
+                # So indices 0-2048 are "Vol"? No, `vol_points` + `near_points` in Objaverse are 1024+1024=2048.
+                # So loader returns 2048.
+                # So indices 0:1024 = Vol, 1024:2048 = Near.
+                # Why does Line 97 use 2048:3072?
+                # AND Line 98 use 3072:?
+                
+                # ERROR IN TRAIN LOOP DETECTED?
+                # If points=2048.
+                # points_all = [Vol(1024), Near(1024), Surface(8192)]
+                # Indices:
+                # Vol: 0:1024
+                # Near: 1024:2048
+                # Surface: 2048:...
+                
+                # But Code at Line 96-98 says:
+                # loss_vol = pred_sdf[:, :2048]  (Indices 0-2048) -> Says Vol is 2048?
+                # loss_near = pred_sdf[:, 2048:3072] (Indices 2048-3072) -> Says Near is 1024.
+                # loss_surface = pred_sdf[:, 3072:]
+                
+                # This implies `points` input from loader has 3072 points?
+                # Let's check `Objaverse` again.
+                # sdf_size = 4096?
+                # Line 131 (main_ae.py): sdf_size=4096.
+                # Line 94 (Objaverse): self.sdf_size = sdf_size.
+                # Line 95: "So we sample sdf_size//4 for each (4096//4 = 1024)"
+                # Line 155: vol_points_sampled = cat types...
+                # Line 156: points = cat([vol, near]). Vol=2*1024=2048?
+                # Wait:
+                # Line 101: pos_vol ... size//4 (1024)
+                # Line 117: neg_vol ... size//4 (1024)
+                # Total Vol = 2048.
+                # Near points: size//4 (1024).
+                # Total Points = 2048 + 1024 = 3072.
+                
+                # OK, so Train Loader returns 3072 points.
+                # Vol (2048) + Near (1024).
+                # Matches Code: :2048 (Vol), 2048:3072 (Near).
+                
+                # NOW, Validation Loader.
+                # If `Objaverse` logic is same, it also returns 3072.
+                # BUT `record.md` says Validation is "Near Points only" (1024).
+                # My check of `Objaverse.py` showed NO special logic for 'val' split regarding sizing, EXCEPT:
+                # `main_ae.py` calls it with same params `sdf_size=4096`.
+                
+                # So currently Validation loader ALSO returns 3072 points.
+                # So `points.shape[1]` is 3072.
+                
+                # If I want to support the "record.md" claim that validation MIGHT be 1024.
+                # I should handle both.
+                
+                # Logic:
+                num_points = points.shape[1]
+                if num_points == 3072: 
+                     # Full set
+                     loss_vol = criterion(pred_sdf[:, :2048], target_sdf[:, :2048])
+                     loss_near = criterion(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072])
+                     loss_surface = (pred_sdf[:, 3072:]).abs().mean()
+                     
+                     vol_iou = calc_iou(pred_sdf[:, :2048], target_sdf[:, :2048], 0)
+                     near_iou = calc_iou(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072], 0)
+                     
+                elif num_points == 1024:
+                     # Assume only Near points? Or only Vol?
+                     # RECORD SAYS: "Validation set: points = near_points -> 1024 query points"
+                     # So indices 0:1024 are Near.
+                     loss_vol = torch.tensor(0.0, device=device)
+                     loss_near = criterion(pred_sdf[:, :1024], target_sdf[:, :1024])
+                     loss_surface = (pred_sdf[:, 1024:]).abs().mean()
+                     
+                     vol_iou = torch.tensor(0.0, device=device)
+                     near_iou = calc_iou(pred_sdf[:, :1024], target_sdf[:, :1024], 0)
+                else:
+                     # Fallback / Error?
+                     # Just assume it's compliant with however it was loaded.
+                     pass 
             
-            target_one_hot_query = F.one_hot(target_labels_idx, num_classes=11)[:, :, 1:].float()
-            target_one_hot_surface = surface[:, :, 3:]
-            target_one_hot = torch.cat([target_one_hot_query, target_one_hot_surface], dim=1)
+            # wait, I need to implement this cleanliness in the replacement chunk.
             
-            loss_cls = F.binary_cross_entropy_with_logits(pred_logits, target_one_hot)
+            if num_points == 1024: # Validation Mode (Lite)
+                 loss_vol = torch.tensor(0.0, device=device)
+                 loss_near = criterion(pred_sdf[:, :1024], target_sdf[:, :1024])
+                 loss_surface = (pred_sdf[:, 1024:]).abs().mean()
+                 
+                 vol_iou = torch.tensor(0.0, device=device)
+                 near_iou = calc_iou(pred_sdf[:, :1024], target_sdf[:, :1024], 0)
+                 
+                 acc_points = pred_cls[:, :1024]
+                 acc_targets = target_labels_idx[:, :1024]
+                 
+            else: # Standard Mode (3072)
+                 loss_vol = criterion(pred_sdf[:, :2048], target_sdf[:, :2048])
+                 loss_near = criterion(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072])
+                 loss_surface = (pred_sdf[:, 3072:]).abs().mean()
+                 
+                 vol_iou = calc_iou(pred_sdf[:, :2048], target_sdf[:, :2048], 0)
+                 near_iou = calc_iou(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072], 0)
+
+                 acc_points = pred_cls[:, :3072]
+                 acc_targets = target_labels_idx[:, :3072]
+            
+            acc = (acc_points == acc_targets).float().mean()
             
             loss = loss_vol + 10 * loss_near + 10 * loss_surface + loss_cls
-
-            pred_probs = torch.cat([torch.zeros_like(pred_logits[:, :, :1]), pred_logits], dim=2)
-            pred_cls = torch.argmax(pred_probs, dim=2)
-            
-            # Accuracy calculation needs to align with flattened targets or specific subset
-            # Here we just compare query part for simplicity or we can expand
-            # target_labels_idx is only for query points.
-            # pred_cls is full. Let's compute accuracy for query points only for now?
-            # Or construct full index targets?
-            # For simplicity, let's just use query part for acc
-            acc = (pred_cls[:, :3072] == target_labels_idx).float().mean()
-            
-            vol_iou = calc_iou(pred_sdf[:, :2048], target_sdf[:, :2048], 0)
-            near_iou = calc_iou(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072], 0)
 
         metric_logger.update(loss=loss.item())
         metric_logger.update(loss_vol=loss_vol.item())

@@ -264,3 +264,45 @@ sdf_predictions: (Batch, 2048)
 调整数据集后发现训练还是停滞，改用run_phase1_sbatch_v2.sh，调高了学习率。
 
 修改了数据的生成方式，现在重启训练。
+现在的数据集质量：
+((junjieenv) ) [chengjun@g2201 VecSetX]$ python check_data_quality.py /scratch/project_2016517/j
+unjie/dataset/repaired_npz
+Found 998 files in /scratch/project_2016517/junjie/dataset/repaired_npz
+============================================================
+
+============================================================
+AGGREGATE STATISTICS
+============================================================
+
+📊 SDF Balance (Vol Positive %)
+  Mean:   51.4%
+  Std:    11.0%
+  Range:  [11.2%, 78.1%]
+
+📊 SDF Balance (Near Positive %)
+  Mean:   52.9%
+  Std:    0.7%
+  Range:  [50.2%, 55.0%]
+
+✅ Label Consistency
+  Mean:   100.0%
+  Std:    0.0%
+  Range:  [100.0%, 100.0%]
+
+📋 Class Coverage Distribution
+  7 classes: 9 files (0.9%)
+  8 classes: 155 files (15.5%)
+  9 classes: 427 files (42.8%)
+  10 classes: 407 files (40.8%)
+
+============================================================
+OVERALL ASSESSMENT
+============================================================
+✅ Consistency: EXCELLENT (>95%)
+⚠️  Vol SDF Balance: Outside recommended range
+⚠️  Near SDF Balance: Outside recommended range
+⚠️  Class Coverage: 40.8% of files have all 10 classes
+
+============================================================
+Total files analyzed: 998
+============================================================

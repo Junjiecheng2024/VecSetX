@@ -42,7 +42,7 @@ def get_args_parser():
 
     parser.add_argument('--point_cloud_size', default=8192, type=int,
                         help='input size')
-    parser.add_argument('--input_dim', default=3, type=int,
+    parser.add_argument('--input_dim', default=13, type=int,
                         help='input dimension (3 for coords, more for extra features)')
 
     # Optimizer parameters
