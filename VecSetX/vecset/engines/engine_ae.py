@@ -106,6 +106,19 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             
             target_one_hot_query = F.one_hot(target_labels_idx, num_classes=11)[:, :, 1:].float()
             # Concatenate surface labels (which are already one-hot in dims 3:13)
+            # Surface shape is (B, 8192, 13), labels at 3:13
+            target_one_hot_surface = surface[:, :, 3:]
+            
+            target_one_hot = torch.cat([target_one_hot_query, target_one_hot_surface], dim=1)
+            loss_cls = F.binary_cross_entropy_with_logits(pred_logits, target_one_hot)
+
+            loss = loss_vol + 1.0 * loss_near + 0.001 * loss_eikonal + 1.0 * loss_surface + 1.0 * loss_cls
+
+
+        loss_value = loss.item()
+
+        threshold = 0
+
         vol_iou = calc_iou(pred_sdf[:, :2048], target_sdf[:, :2048], threshold)
         near_iou = calc_iou(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072], threshold)
         
