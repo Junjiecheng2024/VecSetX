@@ -40,7 +40,7 @@ torchrun --nproc_per_node=4 --master_port=29500 VecSetX/vecset/main_ae.py \
     --warmup_epochs 20 \
     --wandb
 
-# KEY CHANGE LOG (V4):
-# 1. blr: 1e-3 → 2e-4 (Lowered to fix instability/oscillation)
-# 2. Weights: loss_near * 50, loss_surface * 100 (Kept high to strict surface)
+# KEY CHANGE LOG (V4 - Verified Stable):
+# 1. blr: 2e-4 (Standard conservative rate)
+# 2. Weights: loss_near=0.5, loss_surface=0.5, loss_cls=5.0 (Hardcoded in engine_ae.py)
 # 3. Output: v4 directory

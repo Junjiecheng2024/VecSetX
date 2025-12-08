@@ -112,7 +112,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             target_one_hot = torch.cat([target_one_hot_query, target_one_hot_surface], dim=1)
             loss_cls = F.binary_cross_entropy_with_logits(pred_logits, target_one_hot)
 
-            loss = loss_vol + 0.1 * loss_near + 0.001 * loss_eikonal + 0.05 * loss_surface + 1.0 * loss_cls
+            loss = loss_vol + 0.5 * loss_near + 0.001 * loss_eikonal + 0.5 * loss_surface + 5.0 * loss_cls
 
 
         loss_value = loss.item()
