@@ -256,10 +256,10 @@ def main(args):
                 loss_scaler=loss_scaler, epoch=epoch, tag='last')
 
         if epoch % 5 == 0 or epoch + 1 == args.epochs:
-            print(f"Starting validation at epoch {epoch}...")
+            print(f"Starting validation at epoch {epoch}...", flush=True)
             try:
                 test_stats = evaluate(data_loader_val, model, device)
-                print(f"Validation completed at epoch {epoch}.")
+                print(f"Validation completed at epoch {epoch}.", flush=True)
 
                 print(f"iou of the network on the {len(dataset_val)} test images: {test_stats['iou']:.3f}")
                 
