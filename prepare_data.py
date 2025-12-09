@@ -53,7 +53,7 @@ def compute_accurate_sdf_single_batch(query_points, mesh):
         mesh, 
         query_points, 
         surface_point_method='sample',
-        sign_method='normal', 
+        sign_method='depth', 
         scan_count=100,
         scan_resolution=400,
         sample_point_count=10000,
