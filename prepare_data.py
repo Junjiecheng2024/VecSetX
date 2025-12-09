@@ -13,11 +13,7 @@ from functools import partial
 # -----------------------------------------------------------------------------
 # Configuration & Deps
 # -----------------------------------------------------------------------------
-try:
-    import mesh_to_sdf
-    MESH_TO_SDF_AVAILABLE = True
-except ImportError:
-    MESH_TO_SDF_AVAILABLE = False
+# NOTE: Removed mesh_to_sdf dependency (requires display). Using trimesh.proximity instead.
 
 def get_args():
     parser = argparse.ArgumentParser(description="Multi-Class Hybrid Final: Heuristic Vol + Accurate Near (OPTIMIZED)")
@@ -39,74 +35,72 @@ def get_args():
     return parser.parse_args()
 
 # -----------------------------------------------------------------------------
-# Accurate Logic (MeshToSDF for All)
+# Trimesh SDF Computation (Headless-Safe)
 # -----------------------------------------------------------------------------
-def compute_accurate_sdf_single_batch(query_points, mesh):
+def compute_trimesh_sdf_batched(query_points, mesh, batch_size=10000):
     """
-    Computes accurate SDF using mesh_to_sdf.
-    """
-    if not MESH_TO_SDF_AVAILABLE:
-        raise ImportError("mesh_to_sdf required")
+    Compute accurate SDF using trimesh.proximity.signed_distance.
+    This method is headless-safe (no display/rendering required).
     
-    # mesh_to_sdf returns negative for inside, positive for outside
-    sdf = mesh_to_sdf.mesh_to_sdf(
-        mesh, 
-        query_points, 
-        surface_point_method='scan',
-        sign_method='depth', 
-        scan_count=100,
-        scan_resolution=400,
-        sample_point_count=10000,
-        normal_sample_count=100
-    )
-    return sdf.astype(np.float32)
+    Args:
+        query_points: (N, 3) numpy array of query point coordinates
+        mesh: trimesh.Trimesh object
+        batch_size: points per batch to manage memory
+    
+    Returns:
+        sdf: (N,) numpy array, negative=inside, positive=outside
+    
+    Notes:
+        - Uses ray casting for inside/outside detection (robust)
+        - Batched to prevent memory issues on large point clouds
+        - Convention: SDF < 0 (inside), SDF > 0 (outside), SDF ≈ 0 (surface)
+    """
+    n_points = len(query_points)
+    sdf = np.zeros(n_points, dtype=np.float32)
+    
+    for i in range(0, n_points, batch_size):
+        end = min(i + batch_size, n_points)
+        batch = query_points[i:end]
+        
+        # trimesh.proximity.signed_distance uses:
+        # 1. KDTree for nearest surface point (unsigned distance)
+        # 2. Ray casting for sign determination
+        # Returns: negative for inside, positive for outside
+        sdf[i:end] = trimesh.proximity.signed_distance(mesh, batch)
+    
+    return sdf
 
 def compute_sdf_for_class(args_tuple):
     """
-    Wrapper for parallel processing.
-    args_tuple: (query_points, mesh_vertices, mesh_faces, class_idx)
-    Note: mesh_to_sdf needs a Trimesh object. 
-    We pass vertices/faces to reconstruct it inside the worker to avoid pickling issues?
-    Or just pass the mesh if pickling works (usually fine with fork).
-    Let's try passing (query_points, mesh, class_idx).
+    Wrapper for parallel processing of per-class SDF computation.
+    
+    Args:
+        args_tuple: (query_points, mesh_data, class_idx)
+            - query_points: (N, 3) array
+            - mesh_data: either trimesh.Trimesh or (vertices, faces) tuple
+            - class_idx: integer class index (0-based)
+    
+    Returns:
+        (class_idx, sdf): tuple of class index and computed SDF array
     """
     query_points, mesh_data, class_idx = args_tuple
     
-    # If mesh_data is (verts, faces), reconstruct
+    # Reconstruct mesh if passed as tuple (for multiprocessing compatibility)
     if isinstance(mesh_data, tuple):
         verts, faces = mesh_data
         mesh = trimesh.Trimesh(vertices=verts, faces=faces)
     else:
         mesh = mesh_data
-        
-    sdf = compute_accurate_sdf_single_batch(query_points, mesh)
-    return class_idx, sdf
-
-# -----------------------------------------------------------------------------
-# MeshToSDF Logic (Slow but Accurate, for Near SDF)
-# -----------------------------------------------------------------------------
-def compute_high_quality_sdf(query_points, mesh):
-    if not MESH_TO_SDF_AVAILABLE:
-        raise ImportError("mesh_to_sdf required")
     
-    sdf_values = mesh_to_sdf.mesh_to_sdf(
-        mesh, 
-        query_points,
-        surface_point_method='sample',
-        sign_method='normal',
-        scan_count=100,
-        scan_resolution=400
-    )
-    return sdf_values.astype(np.float32)
+    # Use trimesh-based SDF computation (headless-safe)
+    sdf = compute_trimesh_sdf_batched(query_points, mesh, batch_size=10000)
+    return class_idx, sdf
 
 # -----------------------------------------------------------------------------
 # Main Processing
 # -----------------------------------------------------------------------------
 def process_file(file_path, args):
     try:
-        if not MESH_TO_SDF_AVAILABLE:
-            print("    ✗ Skipped: mesh_to_sdf missing")
-            return
             
         # 1. Load Data
         img = nib.load(file_path)
@@ -273,7 +267,7 @@ def process_file(file_path, args):
             for c, (verts, faces) in scaled_full_meshes.items():
                 # Reconstruct mesh locally
                 mesh_temp = trimesh.Trimesh(vertices=verts, faces=faces)
-                sdf = compute_accurate_sdf_single_batch(vol_points, mesh_temp)
+                sdf = compute_trimesh_sdf_batched(vol_points, mesh_temp, batch_size=10000)
                 vol_sdf_all[:, c-1] = sdf
         
         # Combine: Union SDF is minimum across all classes
@@ -299,10 +293,10 @@ def process_file(file_path, args):
         # ---------------------------------------------------------------------
         # COMPUTE: NEAR POINTS (Hybrid)
         # ---------------------------------------------------------------------
-        print(f"    Computing Near SDF (mesh_to_sdf)...")
+        print(f"    Computing Near SDF (trimesh.proximity)...")
         
-        # A. Geometry (High Quality)
-        near_sdf_union = compute_high_quality_sdf(near_points, union_mesh)
+        # A. Geometry (Accurate, Headless-Safe)
+        near_sdf_union = compute_trimesh_sdf_batched(near_points, union_mesh, batch_size=10000)
         
         # B. Semantics (Accurate Check) - PARALLEL (if allowed)
         print(f"    Computing Near Labels (Accurate)...")
@@ -325,7 +319,7 @@ def process_file(file_path, args):
             near_sdf_class_all = np.full((len(near_points), args.classes), 99.0, dtype=np.float32)
             for c, (verts, faces) in scaled_full_meshes.items():
                 mesh_temp = trimesh.Trimesh(vertices=verts, faces=faces)
-                sdf = compute_accurate_sdf_single_batch(near_points, mesh_temp)
+                sdf = compute_trimesh_sdf_batched(near_points, mesh_temp, batch_size=10000)
                 near_sdf_class_all[:, c-1] = sdf
         
         # Heuristic Labels - FIXED for consistency
@@ -384,9 +378,9 @@ def process_file(file_path, args):
 
 def main():
     args = get_args()
-    if not MESH_TO_SDF_AVAILABLE:
-        print("ERROR: mesh_to_sdf required.")
-        return
+    
+    print("Using trimesh.proximity.signed_distance (headless-safe)")
+    print("This method works on clusters without X11 display")
         
     os.makedirs(args.output_dir, exist_ok=True)
     files = sorted(glob.glob(os.path.join(args.input_dir, "*.nii.gz")))
