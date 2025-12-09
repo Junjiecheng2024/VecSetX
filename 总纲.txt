@@ -309,3 +309,25 @@ Total files analyzed: 998
 
 训练了模型后发现还是数据集有问题。
 再重新生成数据集。
+
+
+python prepare_data.py \
+   --input_dir /scratch/project_2016517/junjie/dataset/repaired_shape \
+   --output_dir /scratch/project_2016517/junjie/dataset/repaired_npz \
+   --num_surface_points 100000 \
+   --num_vol_points 100000 \
+   --classes 10 \
+   --batch_size 5000 \
+   --start_idx 0 \
+   --end_idx 1
+
+
+python check_data_visualize.py \
+   --index 0 \
+   --npz_dir /scratch/project_2016517/junjie/dataset/repaired_npz \
+   --gt_dir /scratch/project_2016517/junjie/dataset/repaired_shape \
+   --output_dir data_check_vis \
+   --axis 2
+
+
+python check_data_quality.py /scratch/project_2016517/junjie/dataset/repaired_npz
