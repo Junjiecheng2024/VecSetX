@@ -78,11 +78,12 @@ def visualize_comparison(gt_slice, sample_id, slice_idx, axis, pc_proj=None, vol
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--index', type=int, default=0, help='Index of sample to visualize')
-    parser.add_argument('--csv_path', type=str, required=True, help='Path to objaverse_val.csv or train.csv')
+    parser.add_argument('--csv_path', type=str, default=None, help='Path to objaverse_val.csv or train.csv (optional)')
     parser.add_argument('--npz_dir', type=str, required=True, help='Directory with .npz files')
     parser.add_argument('--gt_dir', type=str, required=True, help='Directory with .nii.gz files')
     parser.add_argument('--output_dir', type=str, default='data_check_vis')
     parser.add_argument('--resolution', type=int, default=128)
+    parser.add_argument('--scan_dir', action='store_true', default=True, help='Scan npz_dir for files instead of using CSV (default True)')
     parser.add_argument('--axis', type=int, default=2, help='Slice axis (0,1,2)')
     
     args = parser.parse_args()
@@ -90,7 +91,19 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     
     # 1. Get Filename
-    files = load_csv(args.csv_path)
+    if args.scan_dir:
+        files = sorted(glob.glob(os.path.join(args.npz_dir, '*.npz')))
+        if len(files) == 0:
+            print(f"No .npz files found in {args.npz_dir}")
+            return
+        files = [os.path.basename(f).replace('.npz', '') for f in files]
+        print(f"Scanned {len(files)} files from directory.")
+    elif args.csv_path:
+        files = load_csv(args.csv_path)
+    else:
+        print("Error: Must provide either --csv_path or use --scan_dir (default).")
+        return
+
     if args.index >= len(files):
         print(f"Index {args.index} out of range (max {len(files)-1})")
         return
