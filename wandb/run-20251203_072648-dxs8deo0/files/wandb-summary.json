@@ -1,1 +1,0 @@
-{"_runtime":3095,"train_loss_eikonal":0.9940211466912713,"train_loss":915.5576934814453,"train_loss_near":82.56697212798255,"n_parameters":425188401,"_timestamp":1.764742624216952e+09,"train_lr":2.4665178571428574e-05,"train_near_iou":0,"_wandb":{"runtime":3095},"train_vol_iou":0,"_step":39,"train_loss_surface":7.210218300776822,"epoch":39,"train_loss_vol":82.67678034305573}

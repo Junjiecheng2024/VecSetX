@@ -1,1 +1,0 @@
-{"_runtime":437,"_timestamp":1.7648291488694687e+09,"epoch":0,"train_loss_vol":89.8994444271504,"train_loss":987.7813374066936,"train_loss_eikonal":0.999433299746439,"_step":0,"train_near_iou":0,"train_lr":2.902763379149898e-07,"n_parameters":425188401,"_wandb":{"runtime":437},"train_loss_surface":0.0009736290623696146,"train_vol_iou":0,"train_loss_near":89.78799409590214}
