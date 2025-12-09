@@ -2151,3 +2151,97 @@ Expected time: 3-8 hours (998 files)
 6. ⏳ Resume Phase 1 training with correct data
 
 **Status**: Ready for cluster testing
+
+## 13. Phase 1 数据集生成优化与量产 (Fast Voxel-based Generation) [Dec 9, 2025]
+
+### 13.1 背景与挑战
+- **速度极慢**: 原方案依赖于 Mesh Ray-casting (使用了 )。虽然精度高，但对于高分辨率医学图像，单文件处理耗时过长（数分钟至数十分钟），无法满足大规模生成需求。
+- **可视化误导**: 验证脚本生成的图像边缘粗糙，引发了对数据精度的不必要担忧。
+- **SDF 分布不均**: 早期生成的 Volume Points 和 Near Points 的 SDF 正负比例严重失衡，不利于模型学习内部结构。
+
+### 13.2 核心算法重构：Voxel-based EDT
+为了彻底解决速度瓶颈，我们引入了基于体素的欧氏距离变换 (Euclidean Distance Transform) 方案。
+
+- **算法原理**:
+  - 放弃对 Mesh 的光线投射。
+  - 直接对 3D 二值 Mask 进行 。
+  - 分别计算“内部距离场” () 和“外部距离场” ()。
+  - 组合得到 SDF: 。
+  - 对于任意实数坐标点，使用**三线性插值 (Trilinear Interpolation)** 从 SDF Grid 中获取值。
+- **性能飞跃**:
+  - 复杂度从 (N \times M)$ (点数 $\times$ 面片数) 降低到 (N)$ (仅与网格大小有关)。
+  - **单文件处理时间从几分钟降低到几秒钟**。
+- **精度验证**: 对于 256³ 分辨率的医学图像，体素级 SDF 的精度完全满足隐式神经场的训练需求。
+
+### 13.3 采样策略优化：SDF Balance
+为了确保模型能均衡学习物体内部和外部的几何特征，我们实施了严格的 50/50 采样策略。
+
+- **Volume Points (50/50)**:
+  - **50% Inside**: 强制从 Mask 内部的体素坐标采样，并添加  的抖动 (Jitter) 将其转化为连续空间坐标。
+  - **50% Global**: 在整个  空间内进行均匀随机采样（主要覆盖外部背景）。
+- **Near Points (50/50)**:
+  - 利用 Marching Cubes 生成的表面法线 ()。
+  - **50% Push Out**: {out} = P_{surf} + \epsilon \times N$
+  - **50% Push In**: {in} = P_{surf} - \epsilon \times N$
+- **收敛结果**:
+  - 经过验证 (by )： 和  的比例均稳定在 **45% ~ 46%**，达到了极佳的平衡状态。
+
+### 13.4 可视化质量修复
+用户曾反馈  生成的图像边缘呈锯齿状（粗糙）。
+- **原因**: 验证脚本默认使用低分辨率 (128x128) 网格和最近邻插值。
+- **修复**: 将分辨率提升至 256 () 后，锯齿消失，图像平滑细腻，证实数据本身的几何精度是完整的。
+
+### 13.5 集群量产配置
+为 CSC 集群生成了最终的量产脚本 。
+
+- **分区**:  (CPU 专用)
+- **资源**: 20 CPU Cores, 32GB RAM
+- **并行**:  (充分利用多核优势)
+- **预计耗时**: 全量数据生成预计可在 1-2 小时内完成。
+
+## 13. Phase 1 数据集生成优化与量产 (Fast Voxel-based Generation) [Dec 9, 2025]
+
+### 13.1 背景与挑战
+- **速度极慢**: 原方案依赖于 Mesh Ray-casting (使用了 `trimesh.proximity.signed_distance`)。虽然精度高，但对于高分辨率医学图像，单文件处理耗时过长（数分钟至数十分钟），无法满足大规模生成需求。
+- **可视化误导**: 验证脚本生成的图像边缘粗糙，引发了对数据精度的不必要担忧。
+- **SDF 分布不均**: 早期生成的 Volume Points 和 Near Points 的 SDF 正负比例严重失衡，不利于模型学习内部结构。
+
+### 13.2 核心算法重构：Voxel-based EDT
+为了彻底解决速度瓶颈，我们引入了基于体素的欧氏距离变换 (Euclidean Distance Transform) 方案。
+
+- **算法原理**:
+  - 放弃对 Mesh 的光线投射。
+  - 直接对 3D 二值 Mask 进行 `scipy.ndimage.distance_transform_edt`。
+  - 分别计算“内部距离场” (`dist_in`) 和“外部距离场” (`dist_out`)。
+  - 组合得到 SDF: `sdf = dist_out - dist_in`。
+  - 对于任意实数坐标点，使用**三线性插值 (Trilinear Interpolation)** 从 SDF Grid 中获取值。
+- **性能飞跃**:
+  - 复杂度从 $O(N \times M)$ (点数 $\times$ 面片数) 降低到 $O(N)$ (仅与网格大小有关)。
+  - **单文件处理时间从几分钟降低到几秒钟**。
+- **精度验证**: 对于 256³ 分辨率的医学图像，体素级 SDF 的精度完全满足隐式神经场的训练需求。
+
+### 13.3 采样策略优化：SDF Balance
+为了确保模型能均衡学习物体内部和外部的几何特征，我们实施了严格的 50/50 采样策略。
+
+- **Volume Points (50/50)**:
+  - **50% Inside**: 强制从 Mask 内部的体素坐标采样，并添加 `[-0.5, 0.5]` 的抖动 (Jitter) 将其转化为连续空间坐标。
+  - **50% Global**: 在整个 `[-1, 1]` 空间内进行均匀随机采样（主要覆盖外部背景）。
+- **Near Points (50/50)**:
+  - 利用 Marching Cubes 生成的表面法线 (`surface_normals`)。
+  - **50% Push Out**: $P_{out} = P_{surf} + \epsilon \times N$
+  - **50% Push In**: $P_{in} = P_{surf} - \epsilon \times N$
+- **收敛结果**:
+  - 经过验证 (by `check_data_quality.py`)：`Vol+` 和 `Near+` 的比例均稳定在 **45% ~ 46%**，达到了极佳的平衡状态。
+
+### 13.4 可视化质量修复
+用户曾反馈 `check_data_visualize.py` 生成的图像边缘呈锯齿状（粗糙）。
+- **原因**: 验证脚本默认使用低分辨率 (128x128) 网格和最近邻插值。
+- **修复**: 将分辨率提升至 256 (`--resolution 256`) 后，锯齿消失，图像平滑细腻，证实数据本身的几何精度是完整的。
+
+### 13.5 集群量产配置
+为 CSC 集群生成了最终的量产脚本 `/home/user/persistent/VecsetX/gen_data_sbatch.sh`。
+
+- **分区**: `small` (CPU 专用)
+- **资源**: 20 CPU Cores, 32GB RAM
+- **并行**: `file_workers=20` (充分利用多核优势)
+- **预计耗时**: 全量数据生成预计可在 1-2 小时内完成。
