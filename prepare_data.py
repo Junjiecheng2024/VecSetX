@@ -371,7 +371,7 @@ def process_file(file_path, args):
                  
         del meshes, scaled_meshes, union_mesh
         del vol_points, vol_sdf, vol_labels, vol_sdf_all
-        del near_points, near_sdf, near_labels, near_sdf_heur_all
+        del near_points, near_sdf, near_labels, near_sdf_class_all
         gc.collect()
         
         return os.path.basename(file_path)  # CRITICAL: Must return for parallel pool

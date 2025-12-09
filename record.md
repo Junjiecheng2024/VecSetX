@@ -1987,3 +1987,46 @@ Start training for 400 epochs
 - **Adopt Accurate SDF**: Switch to `mesh_to_sdf` (or robust Ray Casting) for ALL points (Volume and Near). 
 - **Action**: Rewrite `prepare_data.py` to ensure mathematical correctness of Inside/Outside labels.
 
+
+## 11. Phase 1 失败分析与数据生成修正 (Failure Analysis & Data Generation Pivot) [Dec 9, 2025]
+
+### 11.1 症状与现象
+- **训练指标误导**: 模型训练 IoU 指标达到 ~0.70，由 `engine_ae.py` 报告，看似良好。
+- **可视化灾难**: 使用 `infer_visualize.py` 生成的 3D 切片图显示预测结果呈 "Blob" 状（一团模糊），且大量溢出到背景区域。
+- **指标差异**: 
+  - Training/Validation IoU: ~0.70
+  - Inference 3D IoU (on visual grid): ~0.10 - 0.15
+  - 这种巨大的 Gap 表明训练指标和真实几何性能之间存在根本性脱节。
+
+### 11.2 根因调查 (Forensic Investigation)
+- **步骤 1**: 怀疑 `infer_visualize.py` 的归一化参数计算有误。
+  - **验证**: 修复代码，使其逻辑与 `prepare_data.py` 一致（仅使用存在的类别计算 bbox）。结果：代码逻辑正确，但可视化依然是一团糟。
+- **步骤 2**: 怀疑是模型过拟合或欠拟合。
+  - **验证**: 检查 Epoch 历史，IoU 分数很高。
+- **步骤 3 (关键突破)**: 怀疑**训练数据本身就是错的**。
+  - **行动**: 修改 `infer_visualize.py`，将训练用的 `.npz` 文件中的 Volume Points（及标签）直接叠加到 Ground Truth 切片上。
+  - **结果**: 
+    - **白色点 (Surface)**: 完美贴合器官轮廓，说明几何采样没问题。
+    - **品红色点 (Labeled Inside)**: **严重异常**。大量标记为 "Inside" 的点实际上位于背景空气中，甚至填满了整个包围盒。
+  - **结论**: 模型没有学错，它忠实地学习了错误的标签。训练数据将大量背景空气错误标记为了器官内部。
+
+### 11.3 根本原因 (Root Cause)
+- **Heuristic 算法失效**: 为了追求速度，上一版 `prepare_data.py` 使用了 "Depth Ratio" (距离比) 启发式算法来生成 Volume Points 标签。
+- **假设局限**: 该算法假设物体是简单的凸包状，越靠近中心越可能是内部。对于**多类心脏结构**（包含多个心房心室、且有复杂凹陷结构），这一假设完全破产。
+- **后果**: 算法将凹陷区域的外部空间全部误判为内部，生成了 "Blob" 状的 Ground Truth，导致模型发生 Mode Collapse。
+
+### 11.4 解决方案 (The Fix)
+- **放弃速度，追求正确**: 彻底废弃 Heuristic 算法。
+- **全面采用 MeshToSDF**: 
+  - 所有点（Volume Points 和 Near Points）均使用 `mesh_to_sdf` 库进行计算。
+  - 该库基于 Ray Casting 和 KDTree，能准确判断复杂几何的 Inside/Outside。
+- **重写 `prepare_data.py`**:
+  - 移除了所有 Heuristic 相关函数。
+  - 实现了并行化的 `compute_accurate_sdf_single_batch`。
+  - 针对每个类别分别计算精确 SDF，再进行合并。
+
+### 11.5 后续计划
+1.  **重新生成数据**: 使用新脚本 `prepare_data.py` 生成 998 个样本。预计耗时较长但质量有保证。
+2.  **验证**: 生成部分数据后立即使用 `visualize_npz.py` (需编写) 或直接看点云分布，确认 Inside/Outside 标签正确。
+3.  **重训**: 使用正确的数据重新进行 Phase 1 训练。
+
