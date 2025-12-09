@@ -36,7 +36,9 @@ def main():
     print(f"Loading data from {args.npz_path}...")
     data = np.load(args.npz_path)
     # Surface points: (N, 13)
-    surface_points = data['surface_points']
+    surf_pts = data['surface_points']
+    surf_lbl = data['surface_labels']
+    surface_points = np.concatenate([surf_pts, surf_lbl], axis=1)
     
     # Random sample 8192 if needed, or take all
     if surface_points.shape[0] > 8192:

@@ -218,7 +218,12 @@ def main():
     # 6. Run Model Inference on Grid
     print("Running Model Inference...")
     npz_data = np.load(npz_path)
-    surf_pts = npz_data['surface_points']
+    surf_pts = npz_data['surface_points'] # (N, 3)
+    surf_lbl = npz_data['surface_labels'] # (N, 10)
+    
+    # Concatenate to (N, 13)
+    surf_pts = np.concatenate([surf_pts, surf_lbl], axis=1)
+
     if len(surf_pts) > 8192:
         idx = np.random.choice(len(surf_pts), 8192, replace=False)
         surf_pts = surf_pts[idx]
