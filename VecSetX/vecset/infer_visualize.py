@@ -31,7 +31,7 @@ def load_csv(csv_path):
                 files.append(row[1])
     return files
 
-def visualize_comparison(gt_slice, pred_slice, sample_id, slice_idx, axis, pc_proj=None):
+def visualize_comparison(gt_slice, pred_slice, sample_id, slice_idx, axis, pc_proj=None, vol_proj=None, vol_lbl_proj=None):
     """Generates the comparison plot."""
     # GT Slice: (H, W), entries 0-10
     # Pred Slice: (H, W), entries 0-10
@@ -51,26 +51,41 @@ def visualize_comparison(gt_slice, pred_slice, sample_id, slice_idx, axis, pc_pr
     axes[0].imshow(gt_slice, cmap='nipy_spectral', vmin=0, vmax=10, interpolation='nearest')
     
     # Overlay PC Points if available
+    # Overlay PC Points if available
     if pc_proj is not None:
-        # pc_proj is (N, 2) in [-1, 1]. Need to map to pixel indices [0, Resolution].
-        # Resolution is gt_slice.shape[0]
-        res = gt_slice.shape[0]
-        # x_idx = (x + 1)/2 * res
-        # y_idx = (y + 1)/2 * res
-        # Note: imshow axis 0 is Y (rows), axis 1 is X (cols).
-        # We need to check projection axes carefully.
-        # Assuming pc_proj is [row_coord, col_coord] in range [-1, 1]
-        
+        # ... logic for input PC (surface) ...
         # Map [-1, 1] -> [0, res]
+        res = gt_slice.shape[0]
         r = (pc_proj[:, 0] + 1) * res / 2.0
         c = (pc_proj[:, 1] + 1) * res / 2.0
         
         # Clip
         valid = (r >= 0) & (r < res) & (c >= 0) & (c < res)
         axes[0].scatter(c[valid], r[valid], s=1, c='white', alpha=0.5, label='Input PC')
-        # axes[0].legend()
 
-    axes[0].set_title(f'GT Mask + PC Overlay\n(Val > 0: {np.sum(gt_bin)})')
+    # Overlay Volume Points (Training Data)
+    if vol_proj is not None and vol_lbl_proj is not None:
+        res = gt_slice.shape[0]
+        r = (vol_proj[:, 0] + 1) * res / 2.0
+        c = (vol_proj[:, 1] + 1) * res / 2.0
+        
+        # Inside (1) vs Outside (0)
+        # Assuming vol_lbl_proj is binary or class idx (0=BG)
+        is_inside = vol_lbl_proj > 0
+        
+        valid = (r >= 0) & (r < res) & (c >= 0) & (c < res)
+        
+        # Plot Outside points (Blue)
+        mask_out = valid & (~is_inside)
+        if mask_out.any():
+            axes[0].scatter(c[mask_out], r[mask_out], s=2, c='blue', alpha=0.3, label='Train: Outside')
+            
+        # Plot Inside points (Magenta to contrast with GT)
+        mask_in = valid & is_inside
+        if mask_in.any():
+            axes[0].scatter(c[mask_in], r[mask_in], s=2, c='magenta', alpha=0.3, label='Train: Inside')
+
+    axes[0].set_title(f'GT Mask + Train Data Overlay\n(White=Surf, Mag=In, Blu=Out)')
     axes[0].axis('off')
     
     # 2. Pred
@@ -141,6 +156,20 @@ def main():
     npz_data = np.load(npz_path)
     surf_pts = npz_data['surface_points'] # (N, 3)
     surf_lbl = npz_data['surface_labels'] # (N, 10 or N, 1)
+    
+    # Load Volume Points for Debugging
+    if 'vol_points' in npz_data:
+        vol_pts = npz_data['vol_points']
+        if 'vol_labels' in npz_data:
+            vol_lbl = npz_data['vol_labels'] # labels
+        elif 'vol_sdf' in npz_data:
+            vol_sdf_data = npz_data['vol_sdf']
+            vol_lbl = (vol_sdf_data < 0).astype(int)
+        else:
+            vol_lbl = None
+    else:
+        vol_pts = None
+        vol_lbl = None
     
     # Handle Label Shape
     if surf_lbl.ndim == 2 and surf_lbl.shape[1] == 10:
@@ -325,12 +354,26 @@ def main():
         on_slice = np.abs(surf_pts_vis[:, 0]) < slice_thickness
         pc_proj = surf_pts_vis[on_slice][:, [1, 2]] # Y, Z
         
+        if vol_pts is not None:
+             on_slice_vol = np.abs(vol_pts[:, 0]) < slice_thickness
+             vol_proj = vol_pts[on_slice_vol][:, [1, 2]]
+             vol_lbl_proj = vol_lbl[on_slice_vol] if vol_lbl is not None else None
+        else:
+             vol_proj, vol_lbl_proj = None, None
+        
     elif args.axis == 1:
         sl_gt = gt_resampled[:, mid, :]
         sl_pred = pred_mask[:, mid, :]
         # Slice 1 (Y) -> show X (Row), Z (Col)
         on_slice = np.abs(surf_pts_vis[:, 1]) < slice_thickness
         pc_proj = surf_pts_vis[on_slice][:, [0, 2]] # X, Z
+        
+        if vol_pts is not None:
+             on_slice_vol = np.abs(vol_pts[:, 1]) < slice_thickness
+             vol_proj = vol_pts[on_slice_vol][:, [0, 2]]
+             vol_lbl_proj = vol_lbl[on_slice_vol] if vol_lbl is not None else None
+        else:
+             vol_proj, vol_lbl_proj = None, None
         
     else: # axis 2
         sl_gt = gt_resampled[:, :, mid]
@@ -339,7 +382,14 @@ def main():
         on_slice = np.abs(surf_pts_vis[:, 2]) < slice_thickness
         pc_proj = surf_pts_vis[on_slice][:, [0, 1]] # X, Y
         
-    fig = visualize_comparison(sl_gt, sl_pred, filename, mid, args.axis, pc_proj=pc_proj)
+        if vol_pts is not None:
+             on_slice_vol = np.abs(vol_pts[:, 2]) < slice_thickness
+             vol_proj = vol_pts[on_slice_vol][:, [0, 1]]
+             vol_lbl_proj = vol_lbl[on_slice_vol] if vol_lbl is not None else None
+        else:
+             vol_proj, vol_lbl_proj = None, None
+        
+    fig = visualize_comparison(sl_gt, sl_pred, filename, mid, args.axis, pc_proj=pc_proj, vol_proj=vol_proj, vol_lbl_proj=vol_lbl_proj)
     out_name = os.path.join(args.output_dir, f'{filename}_idx{args.index}_vis.png')
     fig.savefig(out_name)
     print(f"Saved: {out_name}")
