@@ -123,7 +123,7 @@ def main():
 
     # 2. Load Model
     model = autoencoder.__dict__[args.model_name](pc_size=8192, input_dim=13) # Phase 1 hardcoded input_dim=13
-    state = torch.load(args.checkpoint, map_location='cpu')
+    state = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
     if 'model' in state: state = state['model']
     model.load_state_dict(state, strict=True)
     model.to(device)
