@@ -133,60 +133,64 @@ def main():
     npz_path = os.path.join(args.npz_dir, filename + '.npz')
     gt_path = os.path.join(args.gt_dir, filename + '.nii.gz')
     
+    # Load NPZ first to get present classes
     if not os.path.exists(npz_path):
         print(f"NPZ not found: {npz_path}")
         return
-    if not os.path.exists(gt_path):
-        print(f"GT NII not found: {gt_path}")
-        # Try finding recursively or matching?
-        # Assuming flat
-        return
+        
+    npz_data = np.load(npz_path)
+    surf_pts = npz_data['surface_points'] # (N, 3)
+    surf_lbl = npz_data['surface_labels'] # (N, 10 or N, 1)
+    
+    # Handle Label Shape
+    if surf_lbl.ndim == 2 and surf_lbl.shape[1] == 10:
+        # One-hot
+        present_classes_idx = np.where(surf_lbl.sum(axis=0) > 0)[0]
+        present_classes = present_classes_idx + 1 # 1-based class IDs
+    elif surf_lbl.ndim == 1:
+        # Integer labels
+        present_classes = np.unique(surf_lbl)
+        present_classes = present_classes[present_classes > 0]
+    else:
+        # Fallback
+        present_classes = np.arange(1, 11)
+        
+    print(f"Classes present in NPZ: {present_classes}")
+    
+    # Concatenate for model input
+    # Ensure surf_lbl is (N, 10) for concatenation if model expects 13 channels
+    if surf_lbl.ndim == 1:
+        # Convert to one-hot if it was int
+        n_pts = len(surf_lbl)
+        one_hot = np.zeros((n_pts, 10), dtype=np.float32)
+        # valid indices
+        valid = (surf_lbl > 0) & (surf_lbl <= 10)
+        if np.any(valid):
+            # indices -1 because classes are 1..10, cols 0..9
+            cols = surf_lbl[valid].astype(int) - 1
+            one_hot[valid, cols] = 1.0
+        surf_lbl = one_hot
+        
+    surf_pts_input = np.concatenate([surf_pts, surf_lbl], axis=1)
 
-    # 2. Load Model
-    model = autoencoder.__dict__[args.model_name](pc_size=8192, input_dim=13) # Phase 1 hardcoded input_dim=13
-    state = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
-    if 'model' in state: state = state['model']
-    model.load_state_dict(state, strict=True)
-    model.to(device)
-    model.eval()
-    
-    # 3. Load Data & Normalize GT
-    # We need to replicate prepare_data.py normalization to align GT with Model Space
-    # But wait, prepare_data extracted SURFACE POINTS and normalized THEM.
-    # It didn't save the normalization parameters! (shifts, scale).
-    # ERROR: If we don't have shifts/scale, we cannot map GT to Unit Cube accurately.
-    # CHECK: Did prepare_data save them?
-    
-    # Let's peek at prepare_data.py content again...
-    # It creates `surface_points`.
-    # It calculates `shifts` and `scale`.
-    # It converts meshes.
-    # It does NOT save `shifts` or `scale` to .npz!
-    # PROBLEM.
-    
-    # WORKAROUND:
-    # We can Re-Calculate `shifts` and `scale` from the `surface_points` in the .npz?
-    # No, `surface_points` in .npz are ALREADY normalized. We can't know the original scale from them.
-    # But we can Re-Calculate `shifts` and `scale` from the ORIGINAL GT NII.gz!
-    # Yes! We have the GT NII.
-    # We can perform the *exact same* Mesh Extraction + Normalization logic as `prepare_data.py` on the fly.
-    
+    # 3. Load GT and Recalculate Norm Params (Using ONLY present classes)
     import skimage.measure
+    if not os.path.exists(gt_path):
+         print(f"GT NII not found: {gt_path}")
+         return
+         
     nii = nib.load(gt_path)
     img_data = nii.get_fdata()
-    # Handle header orientation? prepare_data used simple `img.get_fdata()`.
-    # Let's follow prepare_data logic.
     
-    # prepare_data used skimage.measure.marching_cubes per class.
-    # That is slow.
-    # Faster approach: Get all non-zero indices.
-    # Or just use the Non-Zero Bounding Box of the Image Volume?
-    # prepare_data: `combined_verts.append(mesh.vertices)`.
-    # It uses ALL vertices of ALL classes to determine scale.
+    print("Re-calculating normalization parameters from GT (Matched Classes)...")
+    # Filter for present classes
+    mask = np.isin(img_data, present_classes)
+    pts = np.argwhere(mask) 
     
-    print("Re-calculating normalization parameters from GT...")
-    # Simplified approach: Get point cloud of all foreground voxels
-    pts = np.argwhere(img_data > 0) # (N, 3) indices
+    if len(pts) == 0:
+        print("Empty GT mask (after filtering)!")
+        return
+
     # Convert to physical coords? prepare_data used `mesh.vertices` which are usually in voxel/affine coordinates.
     # Wait, `skimage.measure.marching_cubes(class_mask, level=0.5)` returns verts in index space.
     # So `mesh.vertices` are roughly voxel indices.
@@ -236,21 +240,15 @@ def main():
     gt_resampled_flat = map_coordinates(img_data, coords_flat, order=0, mode='constant', cval=0)
     gt_resampled = gt_resampled_flat.reshape(density, density, density)
     
-    # 6. Run Model Inference on Grid
-    print("Running Model Inference...")
-    npz_data = np.load(npz_path)
-    surf_pts = npz_data['surface_points'] # (N, 3)
-    surf_lbl = npz_data['surface_labels'] # (N, 10)
-    
-    # Concatenate to (N, 13)
-    surf_pts = np.concatenate([surf_pts, surf_lbl], axis=1)
+    # Model Loading (Moved after NPZ check)
+    model = autoencoder.__dict__[args.model_name](pc_size=8192, input_dim=13) 
+    state = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
+    if 'model' in state: state = state['model']
+    model.load_state_dict(state, strict=True)
+    model.to(device)
+    model.eval()
 
-    if len(surf_pts) > 8192:
-        idx = np.random.choice(len(surf_pts), 8192, replace=False)
-        surf_pts = surf_pts[idx]
-    
-    surf_tensor = torch.from_numpy(surf_pts).unsqueeze(0).to(device)
-    grid_tensor = torch.from_numpy(grid_unit.reshape(-1, 3).astype(np.float32)).unsqueeze(0).to(device)
+    # 4. Create Evaluation Grid in Unit Cube
     
     # Chunking
     block = 100000
@@ -301,22 +299,22 @@ def main():
         # Points in [-1, 1]. Mid slice is at 0.
         # Thickness of slice? 2/density.
         slice_thickness = 2.0 / density
-        on_slice = np.abs(surf_pts[:, 0]) < slice_thickness
-        pc_proj = surf_pts[on_slice][:, [1, 2]] # Y, Z
+        on_slice = np.abs(surf_pts_vis[:, 0]) < slice_thickness
+        pc_proj = surf_pts_vis[on_slice][:, [1, 2]] # Y, Z
         
     elif args.axis == 1:
         sl_gt = gt_resampled[:, mid, :]
         sl_pred = pred_mask[:, mid, :]
         # Slice 1 (Y) -> show X (Row), Z (Col)
-        on_slice = np.abs(surf_pts[:, 1]) < slice_thickness
-        pc_proj = surf_pts[on_slice][:, [0, 2]] # X, Z
+        on_slice = np.abs(surf_pts_vis[:, 1]) < slice_thickness
+        pc_proj = surf_pts_vis[on_slice][:, [0, 2]] # X, Z
         
     else: # axis 2
         sl_gt = gt_resampled[:, :, mid]
         sl_pred = pred_mask[:, :, mid]
         # Slice 2 (Z) -> show X (Row), Y (Col)
-        on_slice = np.abs(surf_pts[:, 2]) < slice_thickness
-        pc_proj = surf_pts[on_slice][:, [0, 1]] # X, Y
+        on_slice = np.abs(surf_pts_vis[:, 2]) < slice_thickness
+        pc_proj = surf_pts_vis[on_slice][:, [0, 1]] # X, Y
         
     fig = visualize_comparison(sl_gt, sl_pred, filename, mid, args.axis, pc_proj=pc_proj)
     out_name = os.path.join(args.output_dir, f'{filename}_idx{args.index}_vis.png')
