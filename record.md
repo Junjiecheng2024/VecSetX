@@ -1,3 +1,4 @@
+
 # Phase 1 基础模型训练实施记录
 
 本文档详细记录了 VecSetX 项目 Phase 1 (多类心脏结构重建) 的实施过程、文件修改原因及具体修改内容。
@@ -1960,3 +1961,29 @@ effective batch size: 64
 Start training for 400 epochs
 ```
 模型正在稳定训练中。
+
+## 2025-12-09: Phase 1 Failure Analysis - Data Generation Flaw
+
+### Symptom
+- Model achieved decent training IoU (~0.70) but visualized results appeared "blobby" with significant extraneous volume.
+- Validation IoU was 0.70, but 3D visualize IoU (Inference) dropped to ~0.10.
+
+### Investigation
+- Created `infer_visualize.py` to inspect the alignment (normalization) between Ground Truth (NII) and Model Input (NPZ).
+- Overlaying the Input Point Cloud (White) on the GT Mask proved the coordinate system was ALIGNED and ACCURATE.
+- Overlaying the Training Data Labels (Volume Points) revealed the root cause:
+    - **Magenta Points (Labeled Inside)** were found densely distributed in the background (air), far outside the actual organ.
+    - **Blue Points (Labeled Outside)** were scarce in regions that should have been clearly outside.
+
+### Root Cause
+- The `prepare_data.py` script used a **Heuristic Algorithm (Depth Ratio)** for "Volume Point" label generation to speed up processing.
+- `depth_ratio = dists / dist_to_center`
+- This heuristic assumes a somewhat convex or simple geometry where being "far from center" implies "outside".
+- For complex, non-convex cardiac structures (multi-class), this assumption failed catastrophically, creating a "Hull" or "Blob" of False Positives.
+- The model successfully learned this incorrect "Blob" distribution, leading to the visual artifacts.
+
+### Solution
+- **Abandon Heuristic**: The speed gain is not worth the corrupted data.
+- **Adopt Accurate SDF**: Switch to `mesh_to_sdf` (or robust Ray Casting) for ALL points (Volume and Near). 
+- **Action**: Rewrite `prepare_data.py` to ensure mathematical correctness of Inside/Outside labels.
+

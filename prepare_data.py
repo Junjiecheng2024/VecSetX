@@ -39,42 +39,47 @@ def get_args():
     return parser.parse_args()
 
 # -----------------------------------------------------------------------------
-# Heuristic Logic (Fast, for Vol SDF & Labels)
+# Accurate Logic (MeshToSDF for All)
 # -----------------------------------------------------------------------------
-def compute_heuristic_sdf_single_batch(query_points, mesh_vertices, threshold=0.5):
+def compute_accurate_sdf_single_batch(query_points, mesh):
     """
-    Computes SDF for a SINGLE batch (no batching inside).
-    Optimized for large memory systems.
+    Computes accurate SDF using mesh_to_sdf.
     """
-    # KDTree for distance
-    tree = cKDTree(mesh_vertices)
+    if not MESH_TO_SDF_AVAILABLE:
+        raise ImportError("mesh_to_sdf required")
     
-    # Centroid for Heuristic
-    mesh_center = mesh_vertices.mean(axis=0)
-    
-    # 1. Dist to Surface
-    dists, _ = tree.query(query_points, k=1)
-    
-    # 2. Dist to Center
-    to_center = query_points - mesh_center
-    dist_to_center = np.linalg.norm(to_center, axis=1)
-    
-    # 3. Depth Ratio
-    depth_ratio = dists / (dist_to_center + 1e-8)
-    
-    # 4. Sign determination
-    is_inside = depth_ratio > threshold
-    signs = np.where(is_inside, -1.0, 1.0)
-    
-    return (dists * signs).astype(np.float32)
+    # mesh_to_sdf returns negative for inside, positive for outside
+    sdf = mesh_to_sdf.mesh_to_sdf(
+        mesh, 
+        query_points, 
+        surface_point_method='sample',
+        sign_method='normal', 
+        scan_count=100,
+        scan_resolution=400,
+        sample_point_count=10000,
+        normal_sample_count=100
+    )
+    return sdf.astype(np.float32)
 
 def compute_sdf_for_class(args_tuple):
     """
     Wrapper for parallel processing.
-    args_tuple: (query_points, mesh_vertices, threshold, class_idx)
+    args_tuple: (query_points, mesh_vertices, mesh_faces, class_idx)
+    Note: mesh_to_sdf needs a Trimesh object. 
+    We pass vertices/faces to reconstruct it inside the worker to avoid pickling issues?
+    Or just pass the mesh if pickling works (usually fine with fork).
+    Let's try passing (query_points, mesh, class_idx).
     """
-    query_points, mesh_vertices, threshold, class_idx = args_tuple
-    sdf = compute_heuristic_sdf_single_batch(query_points, mesh_vertices, threshold)
+    query_points, mesh_data, class_idx = args_tuple
+    
+    # If mesh_data is (verts, faces), reconstruct
+    if isinstance(mesh_data, tuple):
+        verts, faces = mesh_data
+        mesh = trimesh.Trimesh(vertices=verts, faces=faces)
+    else:
+        mesh = mesh_data
+        
+    sdf = compute_accurate_sdf_single_batch(query_points, mesh)
     return class_idx, sdf
 
 # -----------------------------------------------------------------------------
@@ -226,9 +231,9 @@ def process_file(file_path, args):
         near_points = np.clip(near_points, -1, 1)
 
         # ---------------------------------------------------------------------
-        # COMPUTE: VOLUME POINTS (Pure Heuristic) - PARALLEL
+        # COMPUTE: VOLUME POINTS (Accurate) - PARALLEL
         # ---------------------------------------------------------------------
-        print(f"    Computing Vol SDF (Parallel, {len(scaled_meshes)} classes)...")
+        print(f"    Computing Vol SDF (Accurate, {len(meshes)} classes)...")
         
         # CRITICAL: When file_workers > 1, we can't use Pool inside Pool (daemon issue)
         # So we check if n_workers should be disabled
@@ -237,11 +242,21 @@ def process_file(file_path, args):
         # If this is being called from a parallel file worker, disable internal parallelization
         use_parallel = (n_workers > 1) and (args.file_workers <= 1)
         
+        # Calculate shifts/scale again or use pre-calculated? 
+        # Wait, meshes dict has ORIGINAL meshes. 
+        # scaled_meshes had only VERTICES.
+        # We need FULL MESHES (verts+faces) for mesh_to_sdf.
+        # Let's create `scaled_full_meshes`
+        scaled_full_meshes = {}
+        for c, m in meshes.items():
+            v = (m.vertices - shifts) * scale_factor
+            scaled_full_meshes[c] = (v, m.faces) # Pass as tuple
+        
         if use_parallel:
             # Prepare arguments for parallel processing
             tasks = [
-                (vol_points, verts, args.vol_threshold, c-1)
-                for c, verts in scaled_meshes.items()
+                (vol_points, (verts, faces), c-1)
+                for c, (verts, faces) in scaled_full_meshes.items()
             ]
             
             # Parallel computation
@@ -255,8 +270,10 @@ def process_file(file_path, args):
         else:
             # Sequential computation (when file_workers > 1 or n_workers == 1)
             vol_sdf_all = np.full((len(vol_points), args.classes), 99.0, dtype=np.float32)
-            for c, verts in scaled_meshes.items():
-                sdf = compute_heuristic_sdf_single_batch(vol_points, verts, args.vol_threshold)
+            for c, (verts, faces) in scaled_full_meshes.items():
+                # Reconstruct mesh locally
+                mesh_temp = trimesh.Trimesh(vertices=verts, faces=faces)
+                sdf = compute_accurate_sdf_single_batch(vol_points, mesh_temp)
                 vol_sdf_all[:, c-1] = sdf
         
         # Combine: Union SDF is minimum across all classes
@@ -287,28 +304,29 @@ def process_file(file_path, args):
         # A. Geometry (High Quality)
         near_sdf_union = compute_high_quality_sdf(near_points, union_mesh)
         
-        # B. Semantics (Heuristic Check) - PARALLEL (if allowed)
-        print(f"    Computing Near Labels...")
+        # B. Semantics (Accurate Check) - PARALLEL (if allowed)
+        print(f"    Computing Near Labels (Accurate)...")
         
         if use_parallel:
             tasks_near = [
-                (near_points, verts, args.vol_threshold, c-1)
-                for c, verts in scaled_meshes.items()
+                (near_points, (verts, faces), c-1)
+                for c, (verts, faces) in scaled_full_meshes.items()
             ]
             
-            near_sdf_heur_all = np.full((len(near_points), args.classes), 99.0, dtype=np.float32)
+            near_sdf_class_all = np.full((len(near_points), args.classes), 99.0, dtype=np.float32)
             
             with Pool(processes=min(n_workers, len(tasks_near))) as pool:
                 results_near = pool.map(compute_sdf_for_class, tasks_near)
             
             for class_idx, sdf in results_near:
-                near_sdf_heur_all[:, class_idx] = sdf
+                near_sdf_class_all[:, class_idx] = sdf
         else:
             # Sequential
-            near_sdf_heur_all = np.full((len(near_points), args.classes), 99.0, dtype=np.float32)
-            for c, verts in scaled_meshes.items():
-                sdf = compute_heuristic_sdf_single_batch(near_points, verts, args.vol_threshold)
-                near_sdf_heur_all[:, c-1] = sdf
+            near_sdf_class_all = np.full((len(near_points), args.classes), 99.0, dtype=np.float32)
+            for c, (verts, faces) in scaled_full_meshes.items():
+                mesh_temp = trimesh.Trimesh(vertices=verts, faces=faces)
+                sdf = compute_accurate_sdf_single_batch(near_points, mesh_temp)
+                near_sdf_class_all[:, c-1] = sdf
         
         # Heuristic Labels - FIXED for consistency
         near_labels = np.zeros(len(near_points), dtype=np.int8)
@@ -317,9 +335,9 @@ def process_file(file_path, args):
         near_sdf = near_sdf_union
         is_inside_near = near_sdf < 0
         
-        # For inside points, find the class with most negative heuristic SDF
+        # For inside points, find the class with most negative SDF
         for i in np.where(is_inside_near)[0]:
-            class_sdfs = near_sdf_heur_all[i, :]
+            class_sdfs = near_sdf_class_all[i, :]
             inside_classes = np.where(class_sdfs < 0)[0]
             if len(inside_classes) > 0:
                 deepest_class = inside_classes[np.argmin(class_sdfs[inside_classes])]
