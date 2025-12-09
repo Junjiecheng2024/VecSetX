@@ -254,7 +254,19 @@ def main():
     block = 100000
     all_sdf = []
     all_logits = []
+    # Prepare tensors for inference
+    if len(surf_pts_input) > 8192:
+        idx = np.random.choice(len(surf_pts_input), 8192, replace=False)
+        surf_input = surf_pts_input[idx]
+    else:
+        surf_input = surf_pts_input
+
+    surf_tensor = torch.from_numpy(surf_input).unsqueeze(0).to(device)
+    grid_tensor = torch.from_numpy(grid_unit.reshape(-1, 3).astype(np.float32)).unsqueeze(0).to(device)
     
+    # For visualization overlay
+    surf_pts_vis = surf_pts_input[:, :3]
+
     with torch.no_grad():
         bottleneck = model.encode(surf_tensor)
         latent = model.learn(bottleneck['x'])
