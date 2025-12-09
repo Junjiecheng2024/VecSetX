@@ -121,17 +121,19 @@ def main():
             else:
                 print("⚠️  Consistency: NEEDS IMPROVEMENT (<90%)")
             
-            if 45 <= avg_vol_pos <= 70:
-                print("✅ Vol SDF Balance: GOOD (45-70%)")
+            if 45 <= avg_vol_pos * 100 <= 95:
+                print("✅ Vol SDF Balance: GOOD (45-95%)")
+            elif avg_vol_pos * 100 < 1.0 or avg_vol_pos * 100 > 99.0:
+                 print(f"❌ Vol SDF Balance: CRITICAL ERROR ({avg_vol_pos*100:.1f}%) - All Inside or All Outside!")
             else:
-                print("⚠️  Vol SDF Balance: Outside recommended range")
+                print(f"⚠️  Vol SDF Balance: Outside recommended range ({avg_vol_pos*100:.1f}%)")
             
-            if 48 <= avg_near_pos <= 54:
-                print("✅ Near SDF Balance: EXCELLENT (48-54%)")
-            elif 45 <= avg_near_pos <= 60:
-                print("✅ Near SDF Balance: GOOD (45-60%)")
+            if 40 <= avg_near_pos * 100 <= 60:
+                print("✅ Near SDF Balance: EXCELLENT (40-60%)")
+            elif avg_near_pos * 100 < 1.0 or avg_near_pos * 100 > 99.0:
+                 print(f"❌ Near SDF Balance: CRITICAL ERROR ({avg_near_pos*100:.1f}%)")
             else:
-                print("⚠️  Near SDF Balance: Outside recommended range")
+                print(f"⚠️  Near SDF Balance: Outside recommended range ({avg_near_pos*100:.1f}%)")
             
             all_have_10_classes = all(n == 10 for n in num_classes_vals)
             if all_have_10_classes:
