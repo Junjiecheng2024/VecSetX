@@ -31,7 +31,7 @@ def load_csv(csv_path):
                 files.append(row[1])
     return files
 
-def visualize_comparison(gt_slice, pred_slice, sample_id, slice_idx, axis):
+def visualize_comparison(gt_slice, pred_slice, sample_id, slice_idx, axis, pc_proj=None):
     """Generates the comparison plot."""
     # GT Slice: (H, W), entries 0-10
     # Pred Slice: (H, W), entries 0-10
@@ -49,7 +49,28 @@ def visualize_comparison(gt_slice, pred_slice, sample_id, slice_idx, axis):
     
     # 1. GT
     axes[0].imshow(gt_slice, cmap='nipy_spectral', vmin=0, vmax=10, interpolation='nearest')
-    axes[0].set_title(f'GT Mask\n(Val > 0: {np.sum(gt_bin)})')
+    
+    # Overlay PC Points if available
+    if pc_proj is not None:
+        # pc_proj is (N, 2) in [-1, 1]. Need to map to pixel indices [0, Resolution].
+        # Resolution is gt_slice.shape[0]
+        res = gt_slice.shape[0]
+        # x_idx = (x + 1)/2 * res
+        # y_idx = (y + 1)/2 * res
+        # Note: imshow axis 0 is Y (rows), axis 1 is X (cols).
+        # We need to check projection axes carefully.
+        # Assuming pc_proj is [row_coord, col_coord] in range [-1, 1]
+        
+        # Map [-1, 1] -> [0, res]
+        r = (pc_proj[:, 0] + 1) * res / 2.0
+        c = (pc_proj[:, 1] + 1) * res / 2.0
+        
+        # Clip
+        valid = (r >= 0) & (r < res) & (c >= 0) & (c < res)
+        axes[0].scatter(c[valid], r[valid], s=1, c='white', alpha=0.5, label='Input PC')
+        # axes[0].legend()
+
+    axes[0].set_title(f'GT Mask + PC Overlay\n(Val > 0: {np.sum(gt_bin)})')
     axes[0].axis('off')
     
     # 2. Pred
@@ -262,18 +283,42 @@ def main():
     pred_mask[inside_mask] = pred_class[inside_mask]
     
     # 7. Slice and Plot
+    slice_thickness = 2.0 / density
     mid = density // 2
     if args.axis == 0:
         sl_gt = gt_resampled[mid, :, :]
         sl_pred = pred_mask[mid, :, :]
+        # Project PC: x=0 (slice axis). Show (y, z) -> (row, col)
+        # Verify meshgrid order: indexing='ij' -> x, y, z
+        # Slice 0 (X) -> show Y, Z?
+        # Y corresponds to Axis 1. Z corresponds to Axis 2.
+        # But imshow usually expects (Row, Col). 
+        # Let's standardise: Row=Axis Y, Col=Axis Z. (Or vice versa)
+        # slice coords usually: [mid, :, :] keeps dims 1 and 2.
+        # So Row=Dim 1 (Y), Col=Dim 2 (Z).
+        
+        # Filter PC points near specific slice
+        # Points in [-1, 1]. Mid slice is at 0.
+        # Thickness of slice? 2/density.
+        slice_thickness = 2.0 / density
+        on_slice = np.abs(surf_pts[:, 0]) < slice_thickness
+        pc_proj = surf_pts[on_slice][:, [1, 2]] # Y, Z
+        
     elif args.axis == 1:
         sl_gt = gt_resampled[:, mid, :]
         sl_pred = pred_mask[:, mid, :]
-    else:
+        # Slice 1 (Y) -> show X (Row), Z (Col)
+        on_slice = np.abs(surf_pts[:, 1]) < slice_thickness
+        pc_proj = surf_pts[on_slice][:, [0, 2]] # X, Z
+        
+    else: # axis 2
         sl_gt = gt_resampled[:, :, mid]
         sl_pred = pred_mask[:, :, mid]
+        # Slice 2 (Z) -> show X (Row), Y (Col)
+        on_slice = np.abs(surf_pts[:, 2]) < slice_thickness
+        pc_proj = surf_pts[on_slice][:, [0, 1]] # X, Y
         
-    fig = visualize_comparison(sl_gt, sl_pred, filename, mid, args.axis)
+    fig = visualize_comparison(sl_gt, sl_pred, filename, mid, args.axis, pc_proj=pc_proj)
     out_name = os.path.join(args.output_dir, f'{filename}_idx{args.index}_vis.png')
     fig.savefig(out_name)
     print(f"Saved: {out_name}")
