@@ -292,6 +292,17 @@ def main():
     inside_mask = pred_sdf < 0
     pred_mask[inside_mask] = pred_class[inside_mask]
     
+    # Calculate 3D IoU on the Visualization Grid
+    # GT Binary: gt_resampled > 0
+    # Pred Binary: inside_mask
+    gt_bin_3d = gt_resampled > 0
+    pred_bin_3d = inside_mask
+    
+    intersection = np.logical_and(gt_bin_3d, pred_bin_3d).sum()
+    union = np.logical_or(gt_bin_3d, pred_bin_3d).sum()
+    iou_3d = intersection / (union + 1e-6)
+    print(f"Computed 3D IoU for this sample: {iou_3d:.4f}")
+
     # 7. Slice and Plot
     slice_thickness = 2.0 / density
     mid = density // 2
