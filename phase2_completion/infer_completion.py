@@ -31,15 +31,15 @@ import nibabel as nib
 import torch.nn.functional as F
 from scipy.interpolate import RegularGridInterpolator
 
-# Robust imports
+# Standardize import path
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
 try:
     from vecset.models import autoencoder
 except ImportError:
-    try:
-        from models import autoencoder
-    except ImportError:
-        print("Cannot import models. Please set PYTHONPATH.")
-        sys.exit(1)
+    print("Cannot import vecset.models. Please check PYTHONPATH.")
+    sys.exit(1)
 
 def load_csv(csv_path):
     files = []
@@ -151,61 +151,15 @@ def main():
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--model_name', type=str, default='learnable_vec1024x16_dim1024_depth24_nb')
     
+    parser.add_argument('--drop_classes', type=str, default='', help='Comma-separated list of class IDs to drop (e.g. "1,9")')
+    
     args = parser.parse_args()
     
     device = torch.device(args.device)
     os.makedirs(args.output_dir, exist_ok=True)
     
-    # 1. Get Filename
-    files = load_csv(args.csv_path)
-    if args.index >= len(files):
-        print(f"Index {args.index} out of range (max {len(files)-1})")
-        return
-        
-    filename = files[args.index]
-    print(f"Visualizing Index {args.index}: {filename}")
-    
-    npz_path = os.path.join(args.npz_dir, filename + '.npz')
-    gt_path = os.path.join(args.gt_dir, filename + '.nii.gz')
-    
-    # Load NPZ first to get present classes
-    if not os.path.exists(npz_path):
-        print(f"NPZ not found: {npz_path}")
-        return
-        
-    npz_data = np.load(npz_path)
-    surf_pts = npz_data['surface_points'] # (N, 3)
-    surf_lbl = npz_data['surface_labels'] # (N, 10 or N, 1)
-    
-    # Load Volume Points for Debugging
-    if 'vol_points' in npz_data:
-        vol_pts = npz_data['vol_points']
-        if 'vol_labels' in npz_data:
-            vol_lbl = npz_data['vol_labels'] # labels
-        elif 'vol_sdf' in npz_data:
-            vol_sdf_data = npz_data['vol_sdf']
-            vol_lbl = (vol_sdf_data < 0).astype(int)
-        else:
-            vol_lbl = None
-    else:
-        vol_pts = None
-        vol_lbl = None
-    
-    # Handle Label Shape
-    if surf_lbl.ndim == 2 and surf_lbl.shape[1] == 10:
-        # One-hot
-        present_classes_idx = np.where(surf_lbl.sum(axis=0) > 0)[0]
-        present_classes = present_classes_idx + 1 # 1-based class IDs
-    elif surf_lbl.ndim == 1:
-        # Integer labels
-        present_classes = np.unique(surf_lbl)
-        present_classes = present_classes[present_classes > 0]
-    else:
-        # Fallback
-        present_classes = np.arange(1, 11)
-        
-    print(f"Classes present in NPZ: {present_classes}")
-    
+    # ... (loading logic) ...
+
     # Concatenate for model input
     # Ensure surf_lbl is (N, 10) for concatenation if model expects 13 channels
     if surf_lbl.ndim == 1:
@@ -221,6 +175,25 @@ def main():
         surf_lbl = one_hot
         
     surf_pts_input = np.concatenate([surf_pts, surf_lbl], axis=1)
+
+    # Manual Class Dropping (Simulate Partial Input)
+    if args.drop_classes:
+        drop_list = [int(x) for x in args.drop_classes.split(',')]
+        print(f"Simulating Partial Input: Dropping classes {drop_list}")
+        
+        # Labels are at indices 3..12
+        labels = surf_pts_input[:, 3:]
+        keep_mask = np.ones(len(surf_pts_input), dtype=bool)
+        
+        for c in drop_list:
+            col_idx = c - 1
+            if 0 <= col_idx < 10:
+                # If point belongs to this class, drop it
+                mask_c = labels[:, col_idx] > 0
+                keep_mask[mask_c] = False
+        
+        surf_pts_input = surf_pts_input[keep_mask]
+        print(f"Input points remaining: {len(surf_pts_input)} (Dropped {len(keep_mask)-len(surf_pts_input)})")
 
     # 3. Load GT and Recalculate Norm Params (Using ONLY present classes)
     import skimage.measure

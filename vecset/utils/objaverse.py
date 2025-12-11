@@ -21,6 +21,9 @@ class Objaverse(data.Dataset):
         surface_size=2048,
         dataset_folder='/ibex/project/c2281/objaverse',
         return_sdf=True,
+        partial_prob=0.0,
+        min_remove=0,
+        max_remove=0
         ):
         
         self.surface_size = surface_size
@@ -29,6 +32,9 @@ class Objaverse(data.Dataset):
         self.sdf_sampling = sdf_sampling
         self.sdf_size = sdf_size
         self.split = split
+        self.partial_prob = partial_prob
+        self.min_remove = min_remove
+        self.max_remove = max_remove
 
         self.surface_sampling = surface_sampling
 
@@ -74,8 +80,56 @@ class Objaverse(data.Dataset):
             idx = np.random.randint(self.__len__())
             return self.__getitem__(idx)
 
+        # Partial Input Masking Strategy (Random Class Dropout)
+        # Apply BEFORE sampling to ensure we sample from remaining structure or just mask the sampled points?
+        # Masking before sampling allows 'surface_size' to be filled with remaining points (if enough).
+        # But if we mask after sampling, we might get fewer points. 
+        # Better: Filter indices before sampling.
+        
+        valid_indices = None
+        if self.split == 'train' and self.partial_prob > 0 and self.max_remove > 0:
+             if np.random.rand() < self.partial_prob:
+                 if surface_labels is not None:
+                     # surface_labels is usually (N, 10). Need to determine present classes.
+                     if surface_labels.ndim == 2:
+                         # one-hot to class index (1..10)
+                         # Note: Some points might be 0 (background? usually surface points belong to some class)
+                         # Assuming purely foreground points.
+                         present_classes = np.where(surface_labels.sum(axis=0) > 0)[0] # 0-9 indices
+                         if len(present_classes) > self.min_remove:
+                             n_remove = np.random.randint(self.min_remove, min(self.max_remove + 1, len(present_classes)))
+                             remove_cols = np.random.choice(present_classes, n_remove, replace=False)
+                             
+                             # Identify points belonging to removed classes
+                             # Point i is in removed class if surface_labels[i, c] == 1 for any c in remove_cols
+                             mask_remove = surface_labels[:, remove_cols].sum(axis=1) > 0
+                             valid_indices = np.where(~mask_remove)[0]
+                             
+                     elif surface_labels.ndim == 1:
+                         present_classes = np.unique(surface_labels)
+                         present_classes = present_classes[present_classes > 0]
+                         if len(present_classes) > self.min_remove:
+                             n_remove = np.random.randint(self.min_remove, min(self.max_remove + 1, len(present_classes)))
+                             remove_classes = np.random.choice(present_classes, n_remove, replace=False)
+                             
+                             mask_remove = np.isin(surface_labels, remove_classes)
+                             valid_indices = np.where(~mask_remove)[0]
+
+        if valid_indices is not None and len(valid_indices) < 50:
+             # Safety fallback: if we removed almost everything, revert or keep at least something
+             valid_indices = None
+             
         if self.surface_sampling:
-            ind = np.random.default_rng().choice(surface.shape[0], self.surface_size, replace=False)
+            if valid_indices is not None:
+                # Sample from valid subset
+                if len(valid_indices) >= self.surface_size:
+                    ind = np.random.default_rng().choice(valid_indices, self.surface_size, replace=False)
+                else:
+                    ind = np.random.default_rng().choice(valid_indices, self.surface_size, replace=True)
+            else:
+                # Standard sampling
+                ind = np.random.default_rng().choice(surface.shape[0], self.surface_size, replace=False)
+                
             surface = surface[ind]
             if surface_labels is not None:
                 surface_labels = surface_labels[ind]
@@ -87,7 +141,7 @@ class Objaverse(data.Dataset):
             surface_labels = torch.from_numpy(surface_labels)
             surface = torch.cat([surface, surface_labels], dim=-1)
 
-        # surface_normals = torch.from_numpy(surface_normals).float()
+        # ... (rest of the file remains same)
 
         if self.sdf_sampling:
             ### make sure balanced sampling

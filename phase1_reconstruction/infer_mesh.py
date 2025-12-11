@@ -26,15 +26,15 @@ import os
 import sys
 import os
 
-# Add current directory to path if needed or handle package
+# Standardize import path
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
 try:
     from vecset.models import autoencoder
 except ImportError:
-    try:
-        from models import autoencoder
-    except ImportError:
-        print("Cannot import models. Please set PYTHONPATH to include VecSetX directory.")
-        raise
+    print("Cannot import vecset.models. Please check PYTHONPATH.")
+    raise
 
 
 def main():

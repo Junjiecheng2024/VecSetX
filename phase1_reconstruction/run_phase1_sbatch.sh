@@ -26,7 +26,7 @@ export PYTORCH_ALLOC_CONF=expandable_segments:True
 # Run training with OPTIMIZED hyperparameters
 cd /projappl/project_2016517/JunjieCheng/VecSetX
 
-torchrun --nproc_per_node=4 --master_port=29500 VecSetX/vecset/main_ae.py \
+torchrun --nproc_per_node=4 --master_port=29500 phase1_reconstruction/train.py \
     --batch_size 2 \
     --accum_iter 8 \
     --model learnable_vec1024x16_dim1024_depth24_nb \

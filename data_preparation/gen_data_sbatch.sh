@@ -19,7 +19,7 @@ export PYTHONPATH=$PYTHONPATH:$(pwd)
 export OMP_NUM_THREADS=1
 
 # Working Directory (Project Root)
-cd /projappl/project_2016517/JunjieCheng/VecSetX
+cd /projappl/project_2016517/JunjieCheng/VecSetX/data_preparation
 
 # Create logs directory
 mkdir -p logs

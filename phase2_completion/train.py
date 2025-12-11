@@ -11,6 +11,10 @@ from pathlib import Path
 import torch
 import torch.backends.cudnn as cudnn
 
+# Add root directory to sys.path
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
 # Handle tensorboard import with fallback
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -20,11 +24,11 @@ except ImportError:
     except ImportError:
         SummaryWriter = None
 
-import utils.misc as misc
-from utils.objaverse import Objaverse
-from utils.misc import NativeScalerWithGradNormCount as NativeScaler
-from models import autoencoder
-from engines.engine_ae import train_one_epoch, evaluate
+import vecset.utils.misc as misc
+from vecset.utils.objaverse import Objaverse
+from vecset.utils.misc import NativeScalerWithGradNormCount as NativeScaler
+from vecset.models import autoencoder
+from vecset.engines.engine_ae import train_one_epoch, evaluate
 
 import wandb
 
@@ -100,6 +104,14 @@ def get_args_parser():
                         help='url used to set up distributed training')
     parser.add_argument('--wandb', action='store_true', help='Enable wandb logging')
 
+    # Phase 2: Probabilistic Completion parameters
+    parser.add_argument('--partial_prob', type=float, default=0.5,
+                        help='Probability of masking input classes (default: 0.5)')
+    parser.add_argument('--min_remove', type=int, default=1,
+                        help='Minimum number of classes to remove (default: 1)')
+    parser.add_argument('--max_remove', type=int, default=5,
+                        help='Maximum number of classes to remove (default: 5)')
+
     return parser
 
 def main(args):
@@ -128,7 +140,17 @@ def main(args):
              raise FileNotFoundError(f"Objaverse CSV not found: {csv_path}. Please run create_csv.py or sync files.")
     
     try:
-        dataset_train = Objaverse(split='train', sdf_sampling=True, sdf_size=4096, surface_sampling=True, surface_size=args.point_cloud_size, dataset_folder=args.data_path)
+        dataset_train = Objaverse(
+            split='train', 
+            sdf_sampling=True, 
+            sdf_size=4096, 
+            surface_sampling=True, 
+            surface_size=args.point_cloud_size, 
+            dataset_folder=args.data_path,
+            partial_prob=args.partial_prob,
+            min_remove=args.min_remove,
+            max_remove=args.max_remove
+        )
         dataset_val = Objaverse(split='val', sdf_sampling=True, sdf_size=4096, surface_sampling=True, surface_size=args.point_cloud_size, dataset_folder=args.data_path)
         print(f"Dataset initialized. Train: {len(dataset_train)}, Val: {len(dataset_val)}")
     except Exception as e:
