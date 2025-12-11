@@ -73,7 +73,14 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     if log_writer is not None:
         print('log_dir: {}'.format(log_writer.logdir))
 
-    for data_iter_step, (points, labels, surface, _, _) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+    for data_iter_step, batch in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+        points = batch[0]
+        labels = batch[1]
+        surface = batch[2]
+        
+        valid_class_mask = None
+        if len(batch) > 5:
+            valid_class_mask = batch[5].to(device, non_blocking=True)
 
         # we use a per iteration (instead of per epoch) lr scheduler
         if data_iter_step % accum_iter == 0:
@@ -114,17 +121,28 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             # Classification Loss
             # Background class (0) implicitly handled?
             # If using BCEWithLogitsLoss(pred_logits, target_one_hot):
-            # We have 10 logits for classes 1-10.
+            # We have K logits for classes 1-K.
             # If label=0, target_one_hot is all zeros (good).
             # If label=k, target_one_hot[k-1] = 1.
             
-            target_one_hot_query = F.one_hot(target_labels_idx, num_classes=11)[:, :, 1:].float()
-            # Concatenate surface labels (which are already one-hot in dims 3:13)
-            # Surface shape is (B, 8192, 13), labels at 3:13
+            num_cls = getattr(args, 'nb_classes', 10)
+            
+            target_one_hot_query = F.one_hot(target_labels_idx, num_classes=num_cls+1)[:, :, 1:].float()
+            # Concatenate surface labels (which are already one-hot in dims 3:3+num_cls)
+            # Surface shape is (B, 8192, 3+num_cls)
             target_one_hot_surface = surface[:, :, 3:]
             
             target_one_hot = torch.cat([target_one_hot_query, target_one_hot_surface], dim=1)
-            loss_cls = F.binary_cross_entropy_with_logits(pred_logits, target_one_hot)
+            
+            if valid_class_mask is not None:
+                # valid_class_mask: (B, num_cls) -> Expand to (B, N, num_cls)
+                # pred_logits: (B, N, num_cls)
+                mask_expanded = valid_class_mask.unsqueeze(1).expand(-1, pred_logits.shape[1], -1)
+                
+                loss_cls_raw = F.binary_cross_entropy_with_logits(pred_logits, target_one_hot, reduction='none')
+                loss_cls = (loss_cls_raw * mask_expanded).sum() / (mask_expanded.sum() + 1e-5)
+            else:
+                loss_cls = F.binary_cross_entropy_with_logits(pred_logits, target_one_hot)
 
             loss = loss_vol + 0.5 * loss_near + 0.001 * loss_eikonal + 0.5 * loss_surface + 5.0 * loss_cls
 
@@ -207,6 +225,11 @@ def evaluate(data_loader, model, device):
 
     # switch to evaluation mode
     model.eval()
+    
+    # We need args here, but signature is fixed? 
+    # Usually evaluate calls take args, or we can infer from model output shape?
+    # Model output shape is (B, N, 1 + nb_classes).
+    # We can infer nb_classes = output.shape[-1] - 1.
 
     for batch in metric_logger.log_every(data_loader, 10, header):
         points = batch[0]
@@ -223,7 +246,9 @@ def evaluate(data_loader, model, device):
             outputs = model(surface, points_all)
             output = outputs['o']
             
-            # output: (B, N, 11)
+            nb_classes = output.shape[-1] - 1
+            
+            # output: (B, N, 1 + nb_classes)
             pred_sdf = output[:, :, 0]
             pred_logits = output[:, :, 1:]
             
@@ -269,7 +294,7 @@ def evaluate(data_loader, model, device):
                  acc_points = pred_cls[:, :3072]
                  acc_targets = target_labels_idx[:, :3072]
             
-            # --- Added Per-Class IoU Calculation ---
+            # --- Per-Class IoU Calculation ---
             eval_limit = 1024 if num_points == 1024 else 3072
             # Ensure we don't go out of bounds if shape is smaller (e.g. debugging)
             eval_limit = min(eval_limit, pred_sdf.shape[1])
@@ -278,7 +303,7 @@ def evaluate(data_loader, model, device):
             t_full = target_sdf[:, :eval_limit]
             l_full = target_labels_idx[:, :eval_limit]
 
-            for c in range(1, 11):
+            for c in range(1, nb_classes + 1):
                 class_mask = (l_full == c)
                 if class_mask.sum() > 0:
                     p_c = p_full[class_mask]

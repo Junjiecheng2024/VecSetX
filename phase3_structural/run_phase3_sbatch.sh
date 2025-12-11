@@ -31,9 +31,11 @@ torchrun --nproc_per_node=4 --master_port=29502 phase3_structural/train.py \
     --accum_iter 8 \
     --model learnable_vec1024x16_dim1024_depth24_nb \
     --point_cloud_size 8192 \
-    --input_dim 13 \
+    --input_dim 19 \
+    --nb_classes 16 \
     --epochs 400 \
-    --data_path /scratch/project_2016517/junjie/dataset/repaired_npz \
+    --data_path /scratch/project_2016517/junjie/dataset \
+    --train_split train_combined \
     --output_dir output/ae/phase3_structural \
     --log_dir output/ae/phase3_structural \
     --blr 2e-4 \

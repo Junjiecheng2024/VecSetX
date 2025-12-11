@@ -1,42 +1,61 @@
-# Phase 3 结构共现训练实施记录 (Structural Co-occurrence)
+# Phase 3: 结构共现 (子集并集)
 
-本文档记录 VecSetX 项目 Phase 3 (Structural Co-occurrence/结构子集组合学习) 的实施细节。
+**日期**: 2025-12-11
+**目标**: 通过集成包含新结构的第二个数据集 (Dataset B)，扩展模型的解剖学知识库，实现"子集并集 (Union of Subsets)"的能力。
 
-## 1. 核心目标
-Phase 3 的目标是让模型学会从**特定的解剖子集**中恢复完整心脏。这不同于 Phase 2 的随机修补，而是模拟真实的临床场景（例如，只有超声心动图显示的四腔心切面，或者只有造影显示的冠脉和血管）。
+## 1. 数据集成策略
 
-## 2. 核心实现: Subset Masking (子集掩码)
-我们在 `vecset/utils/objaverse.py` 中实现了新的掩码逻辑。
+### 数据集构成
+- **Dataset A (基础集)**: 原始类 Objaverse 心脏数据集 (10 个类别)。
+- **Dataset B (Dryad)**: 来自 Dryad 仓库的 22 个样本 ("Automatic segmentation of multiple cardiovascular structures...")。
+    - **原始格式**: 并排 PNG 图片。
+    - **转换后**: 3D NII 体数据 (图像 + 掩码)。
+    - **新类别**: 上腔静脉 (SVC), 下腔静脉 (IVC), 右室壁 (RVW), 左房壁 (LAW), 冠状窦 (CS)。
+    - **总类别数**: 16 (10 个重叠类别 + 6 个新类别)。
 
-### 定义的子集 (Subsets)
-我们定义了以下具临床意义的子集：
-1.  **Left Heart (左心系统)**: Myocardium(1), LA(2), LV(3), Aorta(6), LAA(8), PV(10)。
-2.  **Right Heart (右心系统)**: RA(4), RV(5), PA(7)。
-3.  **Four Chambers (四腔心)**: LA(2), LV(3), RA(4), RV(5)。
-4.  **Great Vessels (大血管)**: Aorta(6), PA(7), Coronary(9)。
+### 流程更新
+| 步骤 | 脚本 | 说明 |
+| :--- | :--- | :--- |
+| **1. 格式转换** | `convert_dryad_v2.py` | 解析 PNG，将文件夹映射为 Class ID 11-16，提取 CT/Mask 保存为 NII。 |
+| **2. 预处理** | `prepare_data.py` | 增加了 `--pattern` 参数以支持 `label_*.nii.gz` 格式。生成 SDF/Surface 采样。 |
+| **3. 索引构建** | `create_combined_csv.py` | 扫描 `repaired_npz` 和 `dryad_npz`，生成 `objaverse_train_combined.csv`。 |
 
-### 逻辑控制
-通过以下参数组合触发 Phase 3 逻辑：
-*   `max_remove = 0` (禁用 Phase 2 的随机移除)
-*   `partial_prob > 0` (启用 Phase 3 的子集模式)
+## 2. 技术实现细节
 
-当触发时，数据加载器会**随机选择一个子集**，并**仅保留**属于该子集的输入点云，移除所有其他点。这强迫模型从子集推断整体（例如：Given Right Heart -> Predict Full Heart）。
+### A. 动态类别支持与自动填充 (Padding)
+为了在一个 Batch 中混合使用不同类别数 (10 vs 16) 的数据集：
+- **`objaverse.py`**:
+    - 增加了 `num_classes` 参数 (默认 10)。
+    - 实现了 **零填充 (Zero-Padding)**: 如果加载的样本通道数少于 `num_classes`，则用 0 填充额外通道。
 
-## 3. 训练配置
-### 文件: `phase3_structural/train.py`
-复用 Phase 2 的训练脚本，支持参数传递。
-
-### 文件: `phase3_structural/run_phase3_sbatch.sh`
-*   **Job Name**: `vecset_phase3`
-*   **Port**: `29502` (避免与 P1/P2 冲突)
-*   **关键参数**:
-    ```bash
-    --partial_prob 0.8  # 80% 概率触发子集掩码
-    --min_remove 0      # 设为 0 以激活 Objaverse 中的 Phase 3 逻辑
-    --max_remove 0      # 设为 0 以激活 Objaverse 中的 Phase 3 逻辑
+### B. 标签冲突缓解 (Loss Masking)
+**问题**: Dataset A (10类) 将新结构 (SVC 等) 视为"背景" (Class 0)。如果直接训练，Dataset A 会惩罚模型对 SVC 的正确预测，导致模型"遗忘" Dataset B 学到的知识。
+**解决方案**:
+1.  **掩码生成**: `objaverse.py` 检测每个样本的原始列数，并返回 `valid_class_mask` (有效类别为 1.0，填充/未知类别为 0.0)。
+2.  **Masked Loss**: `engine_ae.py` 将此掩码应用于 `BCEWithLogitsLoss`。
+    ```python
+    loss_cls = (loss_cls_raw * mask_expanded).sum() / mask_expanded.sum()
     ```
+    *结果*: 模型只在样本确实包含某类别标签时，才计算该类别的 Loss。
 
-## 4. 预期成果
-训练完成后，该模型应具备“解剖联想”能力：
-*   输入：仅有右心房和右心室。
-*   输出：完整的心脏（包括左心室、主动脉等），且位置和大小应符合解剖学上的共生关系。
+### C. 向后兼容性
+- 修复了共享引擎 (`engine_ae.py`)，如果未通过参数指定类别数，默认使用 10。
+- 验证了 Phase 1 和 Phase 2 脚本无需修改即可正常运行。
+
+## 3. 训练配置 (Phase 3)
+
+**启动脚本**: `phase3_structural/run_phase3_sbatch.sh`
+
+**关键超参数**:
+- `input_dim`: 19 (3 坐标 + 16 类别) *注: 输入维度通常指表面特征维度*
+- `nb_classes`: 16
+- `train_split`: `train_combined`
+- `data_path`: `/scratch/project_2016517/junjie/dataset` (父目录)
+
+## 4. 当前状态
+- 代码库已完全重构。
+- 向后兼容性验证通过。
+- 集群运行准备就绪:
+    1. 运行 `prepare_data.py` 处理 Dryad 数据。
+    2. 运行 `create_combined_csv.py` 生成索引。
+    3. 提交任务 `sbatch phase3_structural/run_phase3_sbatch.sh`。

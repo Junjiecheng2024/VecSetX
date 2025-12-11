@@ -112,6 +112,12 @@ def get_args_parser():
     parser.add_argument('--max_remove', type=int, default=5,
                         help='Maximum number of classes to remove (default: 5)')
 
+    # Phase 3: Structural Co-occurrence parameters
+    parser.add_argument('--train_split', default='train', type=str,
+                        help='CSV split name for training (e.g. train, train_combined)')
+    parser.add_argument('--nb_classes', default=10, type=int,
+                        help='Number of semantic classes (default: 10)')
+
     return parser
 
 def main(args):
@@ -134,14 +140,14 @@ def main(args):
     # Verify CSV files existence (Objaverse internal check)
     import utils.objaverse as obj_utils
     csv_dir = os.path.dirname(obj_utils.__file__)
-    for split in ['train', 'val']:
+    for split in [args.train_split, 'val']:
         csv_path = os.path.join(csv_dir, f'objaverse_{split}.csv')
-        if not os.path.exists(csv_path):
-             raise FileNotFoundError(f"Objaverse CSV not found: {csv_path}. Please run create_csv.py or sync files.")
+        # if not os.path.exists(csv_path):
+        #      raise FileNotFoundError(f"Objaverse CSV not found: {csv_path}. Please run create_csv.py or sync files.")
     
     try:
         dataset_train = Objaverse(
-            split='train', 
+            split=args.train_split, 
             sdf_sampling=True, 
             sdf_size=4096, 
             surface_sampling=True, 
@@ -149,9 +155,18 @@ def main(args):
             dataset_folder=args.data_path,
             partial_prob=args.partial_prob,
             min_remove=args.min_remove,
-            max_remove=args.max_remove
+            max_remove=args.max_remove,
+            num_classes=args.nb_classes
         )
-        dataset_val = Objaverse(split='val', sdf_sampling=True, sdf_size=4096, surface_sampling=True, surface_size=args.point_cloud_size, dataset_folder=args.data_path)
+        dataset_val = Objaverse(
+            split='val', 
+            sdf_sampling=True, 
+            sdf_size=4096, 
+            surface_sampling=True, 
+            surface_size=args.point_cloud_size, 
+            dataset_folder=args.data_path,
+            num_classes=args.nb_classes
+        )
         print(f"Dataset initialized. Train: {len(dataset_train)}, Val: {len(dataset_val)}")
     except Exception as e:
         print(f"Fatal Error initializing Objaverse dataset: {e}")
@@ -217,7 +232,9 @@ def main(args):
         prefetch_factor=2,
     )
 
-    model = autoencoder.__dict__[args.model](pc_size=args.point_cloud_size, input_dim=args.input_dim)
+    # Dynamic Output Dim
+    output_dim = args.nb_classes + 1
+    model = autoencoder.__dict__[args.model](pc_size=args.point_cloud_size, input_dim=args.input_dim, output_dim=output_dim)
     model.to(device)
 
     model_without_ddp = model

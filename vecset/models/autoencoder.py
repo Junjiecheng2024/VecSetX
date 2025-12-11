@@ -127,9 +127,9 @@ class VecSetAutoEncoder(nn.Module):
 
         return {'o': o, **bottleneck}
 
-def create_autoencoder(depth=24, dim=512, M=512, N=2048, query_type='point', bottleneck=None, bottleneck_args={}, input_dim=3):
+def create_autoencoder(depth=24, dim=512, M=512, N=2048, query_type='point', bottleneck=None, bottleneck_args={}, input_dim=3, output_dim=11):
     model = VecSetAutoEncoder(
-        depth=depth, dim=dim, output_dim=11, num_inputs=N, 
+        depth=depth, dim=dim, output_dim=output_dim, num_inputs=N, 
         num_latents=M, query_type=query_type, 
         bottleneck=bottleneck, 
         bottleneck_args=bottleneck_args,
@@ -137,56 +137,62 @@ def create_autoencoder(depth=24, dim=512, M=512, N=2048, query_type='point', bot
     )
     return model
 
-def learnable_vec1024x16_dim1024_depth24_nb(pc_size=8192, input_dim=3):
+def learnable_vec1024x16_dim1024_depth24_nb(pc_size=8192, input_dim=3, output_dim=11):
     return create_autoencoder(
         depth=24, dim=1024, M=1024,
         N=pc_size, query_type='learnable', 
         bottleneck=NormalizedBottleneck, 
         bottleneck_args={'dim': 1024, 'latent_dim': 16},
         input_dim=input_dim,
+        output_dim=output_dim,
     )
 
-def learnable_vec1024x32_dim1024_depth24_nb(pc_size=8192, input_dim=3):
+def learnable_vec1024x32_dim1024_depth24_nb(pc_size=8192, input_dim=3, output_dim=11):
     return create_autoencoder(
         depth=24, dim=1024, M=1024,
         N=pc_size, query_type='learnable', 
         bottleneck=NormalizedBottleneck, 
         bottleneck_args={'dim': 1024, 'latent_dim': 32},
         input_dim=input_dim,
+        output_dim=output_dim,
     )
     
-def point_vec1024x16_dim1024_depth24_nb(pc_size=8192, input_dim=3):
+def point_vec1024x16_dim1024_depth24_nb(pc_size=8192, input_dim=3, output_dim=11):
     return create_autoencoder(
         depth=24, dim=1024, M=1024,
         N=pc_size, query_type='point', 
         bottleneck=NormalizedBottleneck, 
         bottleneck_args={'dim': 1024, 'latent_dim': 16},
         input_dim=input_dim,
+        output_dim=output_dim,
     )
 
-def point_vec1024x32_dim1024_depth24_nb(pc_size=8192, input_dim=3):
+def point_vec1024x32_dim1024_depth24_nb(pc_size=8192, input_dim=3, output_dim=11):
     return create_autoencoder(
         depth=24, dim=1024, M=1024,
         N=pc_size, query_type='point', 
         bottleneck=NormalizedBottleneck, 
         bottleneck_args={'dim': 1024, 'latent_dim': 32},
         input_dim=input_dim,
+        output_dim=output_dim,
     )
     
-def learnable_vec1024_dim1024_depth24(pc_size=8192, input_dim=3):
+def learnable_vec1024_dim1024_depth24(pc_size=8192, input_dim=3, output_dim=11):
     return create_autoencoder(
         depth=24, dim=1024, M=1024,
         N=pc_size, query_type='learnable', 
         bottleneck=Bottleneck, 
         bottleneck_args={},
         input_dim=input_dim,
+        output_dim=output_dim,
     )
     
-def point_vec1024_dim1024_depth24(pc_size=8192, input_dim=3):
+def point_vec1024_dim1024_depth24(pc_size=8192, input_dim=3, output_dim=11):
     return create_autoencoder(
         depth=24, dim=1024, M=1024,
         N=pc_size, query_type='point', 
         bottleneck=Bottleneck, 
         bottleneck_args={},
         input_dim=input_dim,
+        output_dim=output_dim,
     )

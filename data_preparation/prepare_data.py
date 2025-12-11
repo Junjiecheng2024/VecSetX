@@ -25,6 +25,7 @@ def get_args():
     parser.add_argument("--end_idx", type=int, default=None)
     parser.add_argument("--n_workers", type=int, default=0) 
     parser.add_argument("--file_workers", type=int, default=1)
+    parser.add_argument("--pattern", type=str, default="*.nii.gz", help="File pattern to match")
     
     # Sampling Config
     parser.add_argument("--min_surface_per_class", type=int, default=2000, help="Minimum surface points per class")
@@ -325,7 +326,8 @@ def main():
     print("Using Voxel-based EDT SDF (Super Fast & Balanced)")
     
     os.makedirs(args.output_dir, exist_ok=True)
-    files = sorted(glob.glob(os.path.join(args.input_dir, "*.nii.gz")))
+    os.makedirs(args.output_dir, exist_ok=True)
+    files = sorted(glob.glob(os.path.join(args.input_dir, args.pattern)))
     
     start = args.start_idx
     end = args.end_idx if args.end_idx is not None else len(files)

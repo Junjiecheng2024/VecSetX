@@ -23,7 +23,8 @@ class Objaverse(data.Dataset):
         return_sdf=True,
         partial_prob=0.0,
         min_remove=0,
-        max_remove=0
+        max_remove=0,
+        num_classes=10
         ):
         
         self.surface_size = surface_size
@@ -35,6 +36,7 @@ class Objaverse(data.Dataset):
         self.partial_prob = partial_prob
         self.min_remove = min_remove
         self.max_remove = max_remove
+        self.num_classes = num_classes
 
         self.surface_sampling = surface_sampling
 
@@ -61,11 +63,17 @@ class Objaverse(data.Dataset):
                 vol_sdf = data['vol_sdf']
                 near_points = data['near_points']
                 near_sdf = data['near_sdf']
-                surface = data['surface_points']
                 if 'surface_labels' in data:
                     surface_labels = data['surface_labels']
+                    orig_cols = surface_labels.shape[1]
+                    # Handle Padding if num_classes increased
+                    if surface_labels.shape[1] < self.num_classes:
+                        pad_size = self.num_classes - surface_labels.shape[1]
+                        padding = np.zeros((surface_labels.shape[0], pad_size), dtype=surface_labels.dtype)
+                        surface_labels = np.concatenate([surface_labels, padding], axis=1)
                 else:
                     surface_labels = None
+                    orig_cols = 0
                 
                 if 'vol_labels' in data:
                     vol_labels = data['vol_labels']
@@ -133,7 +141,7 @@ class Objaverse(data.Dataset):
                          if surface_labels.ndim == 2:
                              # Keep points if they belong to ANY of the keep_classes
                              # keep_classes are 1-based. indices are 0-based.
-                             keep_cols = [c-1 for c in keep_classes if c-1 < 10]
+                             keep_cols = [c-1 for c in keep_classes if c-1 < self.num_classes] # Updated < 10 to < num_classes check
                              if len(keep_cols) > 0:
                                  mask_keep = surface_labels[:, keep_cols].sum(axis=1) > 0
                                  valid_indices = np.where(mask_keep)[0]
@@ -307,8 +315,16 @@ class Objaverse(data.Dataset):
               
         if self.return_sdf is False: # return occupancies (sign) instead
             sdf = (sdf<0).float()
-
-        return points, sdf, surface, self.models[idx][1], npz_path#, surface_normals
+        
+        # Create Class Mask (for Phase 3 Label Conflict Mitigation)
+        # mask shape: (num_classes,)
+        valid_class_mask = torch.ones(self.num_classes, dtype=torch.float32)
+        
+        # If we loaded a file with fewer columns than num_classes, mask out the extra columns
+        if 'orig_cols' in locals() and orig_cols > 0 and orig_cols < self.num_classes:
+            valid_class_mask[orig_cols:] = 0.0
+        
+        return points, sdf, surface, self.models[idx][1], npz_path, valid_class_mask#, surface_normals
 
     def __len__(self):
         return len(self.models)
