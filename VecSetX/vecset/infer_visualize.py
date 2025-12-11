@@ -1,4 +1,24 @@
 
+"""
+Script: infer_visualize.py
+Purpose: 
+    Visualizes 2D slice comparisons between the Model Prediction and Ground Truth (GT).
+    It generates a composite image showing:
+    1. GT Mask + Overlay of Input Point Cloud (White) & Training Volume Points (Magenta/Blue)
+    2. Predicted Mask
+    3. Binary Overlay (Green=GT, Red=Pred, Yellow=Match)
+    4. Difference Map (Red=False Negative, Green=False Positive)
+
+Usage Example:
+    python vecset/infer_visualize.py \\
+        --csv_path /path/to/train.csv \\
+        --npz_dir /path/to/npz_data \\
+        --gt_dir /path/to/nii_data \\
+        --checkpoint /path/to/checkpoint.pth \\
+        --output_dir vis_results \\
+        --index 0 \\
+        --axis 2
+"""
 import argparse
 import torch
 import numpy as np

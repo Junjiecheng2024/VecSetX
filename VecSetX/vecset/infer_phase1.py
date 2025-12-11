@@ -1,4 +1,22 @@
 
+"""
+Script: infer_phase1.py
+Purpose: 
+    Performs full 3D reconstruction from a single input sample (.npz).
+    It takes the surface points from the input, encodes them into a latent representation,
+    decodes a high-resolution SDF grid (e.g., 128^3 or 256^3), and uses 
+    Marching Cubes to extract the final 3D iso-surface mesh.
+
+    Output: A .ply mesh file.
+
+Usage Example:
+    python vecset/infer_phase1.py \\
+        --npz_path /path/to/data/sample_001.npz \\
+        --checkpoint /path/to/checkpoint.pth \\
+        --output reconstruction.ply \\
+        --resolution 256 \\
+        --model_name learnable_vec1024x16_dim1024_depth24_nb
+"""
 import argparse
 import torch
 import numpy as np
