@@ -292,6 +292,38 @@ def process_file(file_path, args):
             return union_sdf.reshape(-1, 1), labels
 
         vol_sdf, vol_labels = get_sdf_and_labels(vol_points)
+        
+        # Adaptive Correction for Near Points (Push In)
+        # Goal: Ensure "Push In" points actually stay inside (SDF < 0)
+        # Thin structures (like Coronary/SVC) might be crossed by standard epsilon.
+        
+        # 1. Initial Assign
+        near_points[:half] = surface_points[:half] + eps[:half] * surface_normals[:half]
+        near_points[half:] = surface_points[half:] - eps[half:] * surface_normals[half:]
+        near_points = np.clip(near_points, -1, 1)
+        
+        # 2. Iterative Correction
+        for attempt in range(5):
+            near_sdf, near_labels = get_sdf_and_labels(near_points)
+            
+            # Check "Push In" failures: intended to be Inside (half:) but are Outside (SDF > 0)
+            bad_in_local_mask = (near_sdf[half:] > 0).flatten()
+            n_bad = np.sum(bad_in_local_mask)
+            
+            if n_bad == 0:
+                break
+                
+            # Reduce epsilon for failed points
+            # Map local mask to global indices
+            bad_indices = np.where(bad_in_local_mask)[0] + half
+            eps[bad_indices] *= 0.5
+            
+            # Re-update positions for bad points
+            near_points[bad_indices] = surface_points[bad_indices] - eps[bad_indices] * surface_normals[bad_indices]
+            # Clip
+            near_points[bad_indices] = np.clip(near_points[bad_indices], -1, 1)
+
+        # Final computation after correction
         near_sdf, near_labels = get_sdf_and_labels(near_points)
         
         # 7. Save
