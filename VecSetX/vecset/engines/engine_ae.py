@@ -243,6 +243,30 @@ def evaluate(data_loader, model, device):
                  acc_points = pred_cls[:, :3072]
                  acc_targets = target_labels_idx[:, :3072]
             
+            # --- Added Per-Class IoU Calculation ---
+            eval_limit = 1024 if num_points == 1024 else 3072
+            # Ensure we don't go out of bounds if shape is smaller (e.g. debugging)
+            eval_limit = min(eval_limit, pred_sdf.shape[1])
+            
+            p_full = pred_sdf[:, :eval_limit]
+            t_full = target_sdf[:, :eval_limit]
+            l_full = target_labels_idx[:, :eval_limit]
+
+            for c in range(1, 11):
+                class_mask = (l_full == c)
+                if class_mask.sum() > 0:
+                    p_c = p_full[class_mask]
+                    t_c = t_full[class_mask]
+                    
+                    pred_bin = (p_c < 0).float()
+                    target_bin = (t_c < 0).float()
+                    
+                    inter = (pred_bin * target_bin).sum()
+                    union = (pred_bin + target_bin).gt(0).float().sum() + 1e-5
+                    iou_c = inter / union
+                    metric_logger.update(**{f'iou_class_{c}': iou_c.item()})
+            # ---------------------------------------
+
             acc = (acc_points == acc_targets).float().mean()
             # Classification loss logic (optional for eval but good for tracking)
             # We don't have surface labels here easily matched without re-slicing logic matching train.

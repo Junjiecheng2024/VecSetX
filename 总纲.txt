@@ -331,3 +331,6 @@ python check_data_visualize.py \
 
 
 python check_data_quality.py /scratch/project_2016517/junjie/dataset/repaired_npz
+
+
+改了数据集生成方式，现在重新生成点云数据集
