@@ -2245,3 +2245,46 @@ Expected time: 3-8 hours (998 files)
 - **资源**: 20 CPU Cores, 32GB RAM
 - **并行**: `file_workers=20` (充分利用多核优势)
 - **预计耗时**: 全量数据生成预计可在 1-2 小时内完成。
+
+## 14. 指标完善与数据采样策略重构 (Metrics & Sampling Strategy Refactoring) [Dec 11, 2025]
+
+### 14.1 指标完善 (Metrics Implementation)
+为了更全面地评估模型在医学分割任务上的表现，我们在 `vecset/engines/engine_ae.py` 中实现了以下更新：
+*   **Dice Score (DSC)**: 实现了标准的 Dice 系数计算公式 ($Dice = \frac{2 \times Intersection}{|A| + |B|}$)。
+*   **Per-Class Metrics**: 
+    *   在 Validation Loop 中增加了针对 class 1-10 的逐类 IoU 和 Dice 统计。
+    *   新增指标共 20 项：`iou_class_1` ... `iou_class_10` 和 `dice_class_1` ... `dice_class_10`。
+    *   这使得我们能够精确诊断小结构（如冠脉）的学习情况。
+
+### 14.2 数据采样策略重构 (Sampling Strategy Refactor)
+通过分析发现，原始的“按面积加权”采样策略导致小结构（如 Coronary, LAA）分配到的点数极少（<200得点），导致模型在训练中忽视这些结构。
+
+为了解决此问题，我们实施了 **"零和博弈"混合采样策略 (Zero-Cost Balanced Distribution)**，在保持显存占用不变的前提下（Total 150k pts），极大提升了小结构的权重。
+
+#### 修改文件: `prepare_data.py`
+加入了两个新的配置参数：
+*   `--min_surface_per_class`: 默认 **2000**
+*   `--vol_per_class`: 默认 **2500**
+
+#### 具体实施策略：
+1.  **Surface Points (Total 50k, 保持不变)**
+    *   **旧策略**: 纯按面积比例分配。
+    *   **新策略 (Hybrid)**: 
+        *   **低保 (Quota)**: 每个存在的类别先分 2000 点 (20k)。
+        *   **分红 (Weighted)**: 剩余的 30000 点再按面积比例分给大结构。
+    *   **效果**: 冠脉点数从 ~200 暴涨至 ~2200 (+1000%)，左心室点数从 ~30000 降至 ~22000 (-26%，仍充足)。
+
+2.  **Near Points (Total 50k, 保持不变)**
+    *   行为跟随 Surface Points，自动享受上述优化。
+    *   小结构的表面边界定义将更加清晰。
+
+3.  **Volume Points (Total 50k, 保持不变)**
+    *   **旧策略**: 25k 内部点（全局随机）+ 25k 外部点。
+    *   **新策略 (Stratified)**:
+        *   **内部点 (25k)**: 强制按类平分，每个类分配 2500 点。
+        *   **外部点 (25k)**: 保持全空间随机。
+    *   **效果**: 彻底解决了随机采样根本“打不中”细小血管内部的问题，强迫模型学习小结构的内部 SDF 分布。
+
+### 14.3 下一步行动
+*   使用新脚本重新生成全量数据集。
+*   重新启动 Phase 1 训练，预期小结构的 IoU 将有显著提升。

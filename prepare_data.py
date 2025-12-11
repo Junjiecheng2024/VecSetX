@@ -201,7 +201,7 @@ def process_file(file_path, args):
         # A. Inside Points (Stratified per Class)
         for c in range(1, args.classes + 1):
             # Get mask for specific class
-            mask_c = (label_img == c)
+            mask_c = (data == c)
             inside_indices = np.argwhere(mask_c)
             
             if len(inside_indices) > 0:
