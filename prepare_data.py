@@ -25,6 +25,10 @@ def get_args():
     parser.add_argument("--end_idx", type=int, default=None)
     parser.add_argument("--n_workers", type=int, default=0) 
     parser.add_argument("--file_workers", type=int, default=1)
+    
+    # Sampling Config
+    parser.add_argument("--min_surface_per_class", type=int, default=2000, help="Minimum surface points per class")
+    parser.add_argument("--vol_per_class", type=int, default=2500, help="Volume points per class (Inside)")
     return parser.parse_args()
 
 # -----------------------------------------------------------------------------
@@ -144,7 +148,15 @@ def process_file(file_path, args):
         surface_normals_list = [] # Store normals for Near Points
         
         for c, mesh in meshes.items():
-            n_samples = max(1, int(args.num_surface_points * (mesh.area / total_surface_area)))
+            # Hybrid Sampling: Quota + Weighted
+            # 1. Quota
+            quota = args.min_surface_per_class
+            
+            # 2. Weighted (from remaining pool)
+            remaining_pool = max(0, args.num_surface_points - (len(meshes) * quota))
+            weighted_share = int(remaining_pool * (mesh.area / total_surface_area))
+            
+            n_samples = quota + weighted_share
             
             # sample_surface returns (points, face_index)
             p, face_idx = trimesh.sample.sample_surface(mesh, n_samples)
@@ -174,37 +186,48 @@ def process_file(file_path, args):
         # Normalize Surface Points
         surface_points = centered_points * scale_factor
         
-        # 4. Generate Volume Points (Balanced 50/50)
-        # Goal: ~50% Inside, ~50% Random(Outside bias)
+        # 4. Generate Volume Points (Balanced Stratified)
+        # Goal: ~25k Inside (Stratified by Class), ~25k Random(Outside bias)
         
         n_vol_total = args.num_vol_points
-        n_in = n_vol_total // 2
-        n_out = n_vol_total - n_in
+        n_in_target = n_vol_total // 2
+        # Target per class for inside points
+        n_in_per_class = args.vol_per_class 
+        # Note: If n_in_per_class * classes != n_in_target, it might vary slightly.
+        # But roughly 2500 * 10 = 25000.
         
-        # A. Inside Points (from Voxel Mask)
-        # Get all indices where combined_mask is True
-        # indices return (x_idx, y_idx, z_idx) tuple of arrays
-        inside_indices = np.argwhere(combined_mask) 
+        vol_points_in_list = []
         
-        if len(inside_indices) > 0:
-            # Randomly select n_in indices with replacement
-            idxs = np.random.choice(len(inside_indices), n_in, replace=True)
-            chosen_indices = inside_indices[idxs].astype(np.float32)
+        # A. Inside Points (Stratified per Class)
+        for c in range(1, args.classes + 1):
+            # Get mask for specific class
+            mask_c = (label_img == c)
+            inside_indices = np.argwhere(mask_c)
             
-            # Add uniform jitter [-0.5, 0.5] to convert discrete voxel center to continuous volume
-            jitter = np.random.uniform(-0.5, 0.5, chosen_indices.shape).astype(np.float32)
-            vol_points_in_vox = chosen_indices + jitter
-            
-            # Normalize
-            vol_points_in = (vol_points_in_vox - shifts) * scale_factor
+            if len(inside_indices) > 0:
+                # Sample 2500 points for this class
+                idxs = np.random.choice(len(inside_indices), n_in_per_class, replace=True)
+                chosen_indices = inside_indices[idxs].astype(np.float32)
+                
+                # Jitter
+                jitter = np.random.uniform(-0.5, 0.5, chosen_indices.shape).astype(np.float32)
+                p_vox = chosen_indices + jitter
+                p_norm = (p_vox - shifts) * scale_factor
+                vol_points_in_list.append(p_norm)
+            else:
+                 # If class is missing in this patient, skip (or distribute to others? simplified: skip)
+                 pass
+                 
+        if len(vol_points_in_list) > 0:
+            vol_points_in = np.vstack(vol_points_in_list)
         else:
-            # Fallback if mask is empty (shouldn't happen given surface check)
             vol_points_in = np.zeros((0, 3), dtype=np.float32)
-            n_out += n_in # Shift quota to random
 
-        # B. Outside/Random Points (Global Uniform)
-        # Uniform sampling in [-1.1, 1.1] or just [-1, 1]
-        # Using [-1, 1] matches usage space
+        # B. Outside/Random Points (Fill the rest)
+        n_current = len(vol_points_in)
+        n_out = max(0, n_vol_total - n_current)
+        
+        # Uniform sampling in [-1, 1]
         vol_points_out = np.random.uniform(-1, 1, (n_out, 3)).astype(np.float32)
         
         vol_points = np.vstack([vol_points_in, vol_points_out])
