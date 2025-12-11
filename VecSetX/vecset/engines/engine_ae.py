@@ -27,6 +27,20 @@ def calc_iou(output, labels, threshold):
     iou = iou.mean()
     return iou
 
+def calc_dice(output, labels, threshold):
+    target = torch.zeros_like(labels)
+    target[labels<threshold] = 1
+    
+    pred = torch.zeros_like(output)
+    pred[output<threshold] = 1
+
+    intersection = (pred * target).sum(dim=1)
+    # Dice = 2*Inter / (|A| + |B|)
+    # |A| + |B| = (pred.sum + target.sum)
+    cardinality = pred.sum(dim=1) + target.sum(dim=1) + 1e-5
+    dice = (2. * intersection) / cardinality
+    return dice.mean()
+
 def points_gradient(inputs, outputs):
     d_points = torch.ones_like(
         outputs, requires_grad=False, device=outputs.device)
@@ -155,6 +169,12 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(vol_iou=vol_iou.item())
         metric_logger.update(near_iou=near_iou.item())
         metric_logger.update(acc=acc.item())
+        
+        # Also log Dice for training stability monitoring
+        vol_dice = calc_dice(pred_sdf[:, :2048], target_sdf[:, :2048], threshold)
+        near_dice = calc_dice(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072], threshold)
+        metric_logger.update(vol_dice=vol_dice.item())
+        metric_logger.update(near_dice=near_dice.item())
 
         min_lr = 10.
         max_lr = 0.
@@ -225,6 +245,9 @@ def evaluate(data_loader, model, device):
                 
                 vol_iou = torch.tensor(0.0, device=device)
                 near_iou = calc_iou(pred_sdf[:, :1024], target_sdf[:, :1024], 0)
+                
+                vol_dice = torch.tensor(0.0, device=device)
+                near_dice = calc_dice(pred_sdf[:, :1024], target_sdf[:, :1024], 0)
                  
                 acc_points = pred_cls[:, :1024]
                 acc_targets = target_labels_idx[:, :1024]
@@ -239,6 +262,9 @@ def evaluate(data_loader, model, device):
                  
                  vol_iou = calc_iou(pred_sdf[:, :2048], target_sdf[:, :2048], 0)
                  near_iou = calc_iou(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072], 0)
+
+                 vol_dice = calc_dice(pred_sdf[:, :2048], target_sdf[:, :2048], 0)
+                 near_dice = calc_dice(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072], 0)
 
                  acc_points = pred_cls[:, :3072]
                  acc_targets = target_labels_idx[:, :3072]
@@ -261,10 +287,17 @@ def evaluate(data_loader, model, device):
                     pred_bin = (p_c < 0).float()
                     target_bin = (t_c < 0).float()
                     
+                    # IoU
                     inter = (pred_bin * target_bin).sum()
                     union = (pred_bin + target_bin).gt(0).float().sum() + 1e-5
                     iou_c = inter / union
                     metric_logger.update(**{f'iou_class_{c}': iou_c.item()})
+                    
+                    # Dice 
+                    # 2*Inter / (A+B)
+                    card_c = pred_bin.sum() + target_bin.sum() + 1e-5
+                    dice_c = (2. * inter) / card_c
+                    metric_logger.update(**{f'dice_class_{c}': dice_c.item()})
             # ---------------------------------------
 
             acc = (acc_points == acc_targets).float().mean()
@@ -281,10 +314,13 @@ def evaluate(data_loader, model, device):
         metric_logger.update(loss_surface=loss_surface.item())
         metric_logger.update(vol_iou=vol_iou.item())
         metric_logger.update(near_iou=near_iou.item())
+        metric_logger.update(vol_dice=vol_dice.item())
+        metric_logger.update(near_dice=near_dice.item())
         metric_logger.update(acc=acc.item())
         
         # Combined IoU for reporting
         metric_logger.update(iou=(vol_iou.item() + near_iou.item()) / 2.0)
+        metric_logger.update(dice=(vol_dice.item() + near_dice.item()) / 2.0)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
