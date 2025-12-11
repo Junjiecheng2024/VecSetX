@@ -86,34 +86,61 @@ class Objaverse(data.Dataset):
         # But if we mask after sampling, we might get fewer points. 
         # Better: Filter indices before sampling.
         
-        valid_indices = None
-        if self.split == 'train' and self.partial_prob > 0 and self.max_remove > 0:
-             if np.random.rand() < self.partial_prob:
-                 if surface_labels is not None:
-                     # surface_labels is usually (N, 10). Need to determine present classes.
-                     if surface_labels.ndim == 2:
-                         # one-hot to class index (1..10)
-                         # Note: Some points might be 0 (background? usually surface points belong to some class)
-                         # Assuming purely foreground points.
-                         present_classes = np.where(surface_labels.sum(axis=0) > 0)[0] # 0-9 indices
-                         if len(present_classes) > self.min_remove:
-                             n_remove = np.random.randint(self.min_remove, min(self.max_remove + 1, len(present_classes)))
-                             remove_cols = np.random.choice(present_classes, n_remove, replace=False)
-                             
-                             # Identify points belonging to removed classes
-                             # Point i is in removed class if surface_labels[i, c] == 1 for any c in remove_cols
-                             mask_remove = surface_labels[:, remove_cols].sum(axis=1) > 0
-                             valid_indices = np.where(~mask_remove)[0]
-                             
-                     elif surface_labels.ndim == 1:
-                         present_classes = np.unique(surface_labels)
-                         present_classes = present_classes[present_classes > 0]
-                         if len(present_classes) > self.min_remove:
-                             n_remove = np.random.randint(self.min_remove, min(self.max_remove + 1, len(present_classes)))
-                             remove_classes = np.random.choice(present_classes, n_remove, replace=False)
-                             
-                             mask_remove = np.isin(surface_labels, remove_classes)
-                             valid_indices = np.where(~mask_remove)[0]
+        if self.split == 'train' and self.partial_prob > 0:
+             # Phase 3: Structural Subsets
+             # If min_remove/max_remove are set, use random dropout (Phase 2 logic)
+             # If min_remove=0, check for subset mode logic (Phase 3)
+             
+             # Defined Subsets (1-based class IDs)
+             # 1:Myo, 2:LA, 3:LV, 4:RA, 5:RV, 6:Ao, 7:PA, 8:LAA, 9:Cor, 10:PV
+             SUBSETS = {
+                 'left_heart': [1, 2, 3, 6, 8, 10], 
+                 'right_heart': [4, 5, 7],
+                 'four_chambers': [2, 3, 4, 5],
+                 'great_vessels': [6, 7, 9]
+             }
+
+             if self.max_remove > 0:
+                 # Phase 2 Logic: Random Dropout
+                 if np.random.rand() < self.partial_prob:
+                     if surface_labels is not None:
+                         if surface_labels.ndim == 2:
+                             present_classes = np.where(surface_labels.sum(axis=0) > 0)[0] 
+                             if len(present_classes) > self.min_remove:
+                                 n_remove = np.random.randint(self.min_remove, min(self.max_remove + 1, len(present_classes)))
+                                 remove_cols = np.random.choice(present_classes, n_remove, replace=False)
+                                 mask_remove = surface_labels[:, remove_cols].sum(axis=1) > 0
+                                 valid_indices = np.where(~mask_remove)[0]
+                         elif surface_labels.ndim == 1:
+                             present_classes = np.unique(surface_labels)
+                             present_classes = present_classes[present_classes > 0]
+                             if len(present_classes) > self.min_remove:
+                                 n_remove = np.random.randint(self.min_remove, min(self.max_remove + 1, len(present_classes)))
+                                 remove_classes = np.random.choice(present_classes, n_remove, replace=False)
+                                 mask_remove = np.isin(surface_labels, remove_classes)
+                                 valid_indices = np.where(~mask_remove)[0]
+             
+             else:
+                 # Phase 3 Logic: Structural Subset (Co-occurrence)
+                 # If no max_remove, but partial_prob > 0, we assume Subset Mode
+                 # We randomly pick ONE subset to KEEP.
+                 if np.random.rand() < self.partial_prob:
+                     # Randomly select a subset definition
+                     subset_name = np.random.choice(list(SUBSETS.keys()))
+                     keep_classes = SUBSETS[subset_name]
+                     
+                     if surface_labels is not None:
+                         if surface_labels.ndim == 2:
+                             # Keep points if they belong to ANY of the keep_classes
+                             # keep_classes are 1-based. indices are 0-based.
+                             keep_cols = [c-1 for c in keep_classes if c-1 < 10]
+                             if len(keep_cols) > 0:
+                                 mask_keep = surface_labels[:, keep_cols].sum(axis=1) > 0
+                                 valid_indices = np.where(mask_keep)[0]
+                                 
+                         elif surface_labels.ndim == 1:
+                             mask_keep = np.isin(surface_labels, keep_classes)
+                             valid_indices = np.where(mask_keep)[0]
 
         if valid_indices is not None and len(valid_indices) < 50:
              # Safety fallback: if we removed almost everything, revert or keep at least something
