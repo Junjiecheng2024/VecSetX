@@ -10,11 +10,11 @@ Purpose:
     Output: A .ply mesh file.
 
 Usage Example:
-    python vecset/infer_phase1.py \\
-        --npz_path /path/to/data/sample_001.npz \\
-        --checkpoint /path/to/checkpoint.pth \\
-        --output reconstruction.ply \\
-        --resolution 256 \\
+    python vecset/infer_phase1.py \
+        --npz_path /path/to/data/sample_001.npz \
+        --checkpoint /path/to/checkpoint.pth \
+        --output reconstruction.ply \
+        --resolution 256 \
         --model_name learnable_vec1024x16_dim1024_depth24_nb
 """
 import argparse
