@@ -94,6 +94,7 @@ class Objaverse(data.Dataset):
         # But if we mask after sampling, we might get fewer points. 
         # Better: Filter indices before sampling.
         
+        valid_indices = None
         if self.split == 'train' and self.partial_prob > 0:
              # Phase 3: Structural Subsets
              # If min_remove/max_remove are set, use random dropout (Phase 2 logic)
