@@ -138,7 +138,7 @@ def main(args):
         raise FileNotFoundError(f"Data path does not exist: {args.data_path}")
 
     # Verify CSV files existence (Objaverse internal check)
-    import utils.objaverse as obj_utils
+    import vecset.utils.objaverse as obj_utils
     csv_dir = os.path.dirname(obj_utils.__file__)
     for split in [args.train_split, 'val']:
         csv_path = os.path.join(csv_dir, f'objaverse_{split}.csv')
