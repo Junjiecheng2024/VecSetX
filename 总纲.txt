@@ -111,6 +111,7 @@ MEM: 480Gi
 
 点云数据集：（训练用数据集）
 /scratch/project_2016517/junjie/dataset/repaired_npz
+/scratch/project_2016517/junjie/dataset/dryad_npz
 ----------------------------------------------------------------------------
 单卡测试进行中。
 待单卡测试完成，运行正式4卡训练。
