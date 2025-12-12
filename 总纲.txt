@@ -76,6 +76,12 @@
 8 : LAA : The left atrial appendage
 9 : Coronary : The left and right coronary arteries
 10 : PV : The pulmonary veins
+11 : SVC : Superior Vena Cava
+12 : IVC : Inferior Vena Cava
+13 : CS : Coronary Sinus
+14 : RVW : Right Ventricular Wall
+15 : LAW : Left Atrial Wall
+16 : PML : Posterior Mitral Leaflet
 
 
 prepare_data.py数据准备脚本 (处理所有样本)（原始数据为 .nii.gz 格式的医学分割掩码，而 VecSetX 模型训练需要包含点云、SDF 值和表面法向量（可选）的 .npz 格式数据。此外，Phase 1 要求进行多类重建，因此需要在数据中包含类别信息。
