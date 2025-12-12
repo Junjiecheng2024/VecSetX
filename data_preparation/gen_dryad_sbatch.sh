@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=10
 #SBATCH --mem=16G
-#SBATCH --time=01:00:00
+#SBATCH --time=12:00:00
 #SBATCH --output=logs/dryad_gen_%j.out
 #SBATCH --error=logs/dryad_gen_%j.err
 

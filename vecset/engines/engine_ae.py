@@ -8,8 +8,8 @@ from numpy import inner
 import torch
 import torch.nn.functional as F
 
-import utils.misc as misc
-import utils.lr_sched as lr_sched
+import vecset.utils.misc as misc
+import vecset.utils.lr_sched as lr_sched
 
 
 def calc_iou(output, labels, threshold):
