@@ -89,7 +89,7 @@ def get_args_parser():
                         help='Perform evaluation only')
     parser.add_argument('--dist_eval', action='store_true', default=False,
                         help='Enabling distributed evaluation (recommended during training for faster monitor')
-    parser.add_argument('--num_workers', default=60, type=int)
+    parser.add_argument('--num_workers', default=8, type=int)
     parser.add_argument('--pin_mem', action='store_true',
                         help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
     parser.add_argument('--no_pin_mem', action='store_false', dest='pin_mem')
@@ -190,8 +190,10 @@ def main(args):
                 # Replace with your actual WandB API key
                 print(f"Attempting WandB login...")
                 wandb.login(key="d6891a1bb4397a24519ef1b36091aa1b77ea67e1")
-                wandb.init(project="VecSetAutoEncoder", config=args)
-                print(f"WandB initialized successfully.")
+                # Generate run name with timestamp
+                run_name = f"P2_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                wandb.init(project="VecSetAutoEncoder", name=run_name, config=args)
+                print(f"WandB initialized successfully with run name: {run_name}")
             except Exception as e:
                 print(f"Warning: WandB initialization failed: {e}")
                 print("Continuing without WandB logging...")

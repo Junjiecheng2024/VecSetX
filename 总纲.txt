@@ -319,3 +319,8 @@ python check_data_quality.py /scratch/project_2016517/junjie/dataset/repaired_np
 改了数据集生成方式，现在重新生成点云数据集
 
 找到一个新的数据集：Dryad
+
+应用新改进的数据集（每类先采样2000个点，再按面积均匀采样），训练后发现效果几乎没有区别。
+应用新的训练策略：1.训练时也按类别采样。2.Focal BCE Loss增加gamma至2.0，提高难分类点的权重。3.增加6，7，9，10类的权重。
+
+现在p1，p2，p3正在并行训练中
