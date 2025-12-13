@@ -10,6 +10,55 @@ import csv
 
 import trimesh
 
+# ============================================================================
+# Class-Balanced Surface Sampling
+# ============================================================================
+def balanced_sample_surface(surface, surface_labels, target_size):
+    """
+    Sample surface points ensuring each class gets proportional representation.
+    This helps the model learn small structures like Aorta, PA, PV better.
+    
+    Args:
+        surface: (N, 3) surface points
+        surface_labels: (N, C) one-hot or (N,) class indices
+        target_size: number of points to sample
+    
+    Returns:
+        indices: array of sampled indices
+    """
+    if surface_labels.ndim == 2:
+        # One-hot: get class index for each point (0 = background if all zeros)
+        class_idx = np.argmax(surface_labels, axis=1)
+        # Check for background (all zeros in one-hot)
+        is_background = surface_labels.sum(axis=1) == 0
+        class_idx[is_background] = 0
+    else:
+        class_idx = surface_labels
+    
+    unique_classes = np.unique(class_idx)
+    unique_classes = unique_classes[unique_classes > 0]  # Exclude background
+    
+    if len(unique_classes) == 0:
+        # Fallback to random sampling if no valid classes
+        return np.random.default_rng().choice(len(surface), target_size, replace=len(surface) < target_size)
+    
+    points_per_class = target_size // len(unique_classes)
+    remainder = target_size % len(unique_classes)
+    
+    sampled_indices = []
+    for i, cls in enumerate(unique_classes):
+        cls_indices = np.where(class_idx == cls)[0]
+        n_sample = points_per_class + (1 if i < remainder else 0)
+        
+        if len(cls_indices) >= n_sample:
+            chosen = np.random.default_rng().choice(cls_indices, n_sample, replace=False)
+        else:
+            # If not enough points for this class, sample with replacement
+            chosen = np.random.default_rng().choice(cls_indices, n_sample, replace=True)
+        sampled_indices.extend(chosen)
+    
+    return np.array(sampled_indices)
+
 class Objaverse(data.Dataset):
     def __init__(
         self, 
@@ -163,8 +212,13 @@ class Objaverse(data.Dataset):
                     ind = np.random.default_rng().choice(valid_indices, self.surface_size, replace=False)
                 else:
                     ind = np.random.default_rng().choice(valid_indices, self.surface_size, replace=True)
+            elif self.split == 'train' and surface_labels is not None:
+                # ================================================================
+                # Class-Balanced Sampling for Training
+                # ================================================================
+                ind = balanced_sample_surface(surface, surface_labels, self.surface_size)
             else:
-                # Standard sampling
+                # Standard random sampling for validation
                 ind = np.random.default_rng().choice(surface.shape[0], self.surface_size, replace=False)
                 
             surface = surface[ind]

@@ -41,6 +41,37 @@ def calc_dice(output, labels, threshold):
     dice = (2. * intersection) / cardinality
     return dice.mean()
 
+# ============================================================================
+# Advanced Loss Functions for Small Structure Improvement
+# ============================================================================
+
+# Per-class SDF loss weights (1-indexed: Myo, LA, LV, RA, RV, Ao, PA, LAA, Cor, PV)
+# Higher weights for small/difficult structures: Aorta(6), PA(7), Coronary(9), PV(10)
+CLASS_SDF_WEIGHTS = [1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 1.0, 2.0, 2.0]
+
+def focal_bce_loss(pred, target, gamma=2.0, alpha=0.25, reduction='mean'):
+    """
+    Focal Loss for multi-label binary classification.
+    Focuses learning on hard-to-classify examples.
+    
+    Args:
+        pred: (B, N, C) logits
+        target: (B, N, C) one-hot targets
+        gamma: focusing parameter (higher = more focus on hard examples)
+        alpha: class balance weight
+    """
+    bce = F.binary_cross_entropy_with_logits(pred, target, reduction='none')
+    pt = torch.exp(-bce)  # pt = p if y=1, 1-p if y=0
+    focal_weight = alpha * (1 - pt) ** gamma
+    focal_loss = focal_weight * bce
+    
+    if reduction == 'mean':
+        return focal_loss.mean()
+    elif reduction == 'none':
+        return focal_loss
+    else:
+        return focal_loss.sum()
+
 def points_gradient(inputs, outputs):
     d_points = torch.ones_like(
         outputs, requires_grad=False, device=outputs.device)
@@ -118,6 +149,27 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             loss_near = criterion(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072])
             loss_surface = (pred_sdf[:, 3072:]).abs().mean()
             
+            # ================================================================
+            # Per-Class Weighted SDF Loss (for Vol and Near points)
+            # ================================================================
+            # Get class weights tensor
+            class_weights_tensor = torch.tensor(CLASS_SDF_WEIGHTS, device=device, dtype=torch.float32)
+            
+            # Get per-point weights based on ground truth label (clamped to valid range)
+            # target_labels_idx: (B, N) with values 0-10 (0=background)
+            # For background (0), use weight 1.0
+            point_labels_clamped = target_labels_idx.clamp(0, len(CLASS_SDF_WEIGHTS))
+            # Create weight lookup with 1.0 for background at index 0
+            weights_with_bg = torch.cat([torch.ones(1, device=device), class_weights_tensor])
+            point_weights = weights_with_bg[point_labels_clamped]  # (B, N)
+            
+            # Compute weighted SDF losses
+            loss_vol_raw = F.l1_loss(pred_sdf[:, :2048], target_sdf[:, :2048], reduction='none')
+            loss_vol_weighted = (loss_vol_raw * point_weights[:, :2048]).mean()
+            
+            loss_near_raw = F.l1_loss(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072], reduction='none')
+            loss_near_weighted = (loss_near_raw * point_weights[:, 2048:3072]).mean()
+            
             # Classification Loss
             # Background class (0) implicitly handled?
             # If using BCEWithLogitsLoss(pred_logits, target_one_hot):
@@ -134,17 +186,21 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             
             target_one_hot = torch.cat([target_one_hot_query, target_one_hot_surface], dim=1)
             
+            # ================================================================
+            # Focal Loss for Classification (focuses on hard examples)
+            # ================================================================
             if valid_class_mask is not None:
                 # valid_class_mask: (B, num_cls) -> Expand to (B, N, num_cls)
                 # pred_logits: (B, N, num_cls)
                 mask_expanded = valid_class_mask.unsqueeze(1).expand(-1, pred_logits.shape[1], -1)
                 
-                loss_cls_raw = F.binary_cross_entropy_with_logits(pred_logits, target_one_hot, reduction='none')
+                loss_cls_raw = focal_bce_loss(pred_logits, target_one_hot, gamma=2.0, alpha=0.25, reduction='none')
                 loss_cls = (loss_cls_raw * mask_expanded).sum() / (mask_expanded.sum() + 1e-5)
             else:
-                loss_cls = F.binary_cross_entropy_with_logits(pred_logits, target_one_hot)
+                loss_cls = focal_bce_loss(pred_logits, target_one_hot, gamma=2.0, alpha=0.25)
 
-            loss = loss_vol + 0.5 * loss_near + 0.001 * loss_eikonal + 0.5 * loss_surface + 5.0 * loss_cls
+            # Use weighted losses instead of original
+            loss = loss_vol_weighted + 0.5 * loss_near_weighted + 0.001 * loss_eikonal + 0.5 * loss_surface + 5.0 * loss_cls
 
 
         loss_value = loss.item()
