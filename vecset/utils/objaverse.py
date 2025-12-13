@@ -63,6 +63,7 @@ class Objaverse(data.Dataset):
                 vol_sdf = data['vol_sdf']
                 near_points = data['near_points']
                 near_sdf = data['near_sdf']
+                surface = data['surface_points']  # Load surface points
                 if 'surface_labels' in data:
                     surface_labels = data['surface_labels']
                     orig_cols = surface_labels.shape[1]
