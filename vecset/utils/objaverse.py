@@ -138,14 +138,14 @@ class Objaverse(data.Dataset):
             idx = np.random.randint(self.__len__())
             return self.__getitem__(idx)
 
+
         # Partial Input Masking Strategy (Random Class Dropout)
-        # Apply BEFORE sampling to ensure we sample from remaining structure or just mask the sampled points?
-        # Masking before sampling allows 'surface_size' to be filled with remaining points (if enough).
-        # But if we mask after sampling, we might get fewer points. 
-        # Better: Filter indices before sampling.
+        # Phase 2: 训练集和验证集都使用partial masking来测试补全能力
         
         valid_indices = None
-        if self.split == 'train' and self.partial_prob > 0:
+        removed_classes = []  # 记录被移除的类
+        
+        if self.partial_prob > 0:  # 移除 self.split == 'train' 限制
              # Phase 3: Structural Subsets
              # If min_remove/max_remove are set, use random dropout (Phase 2 logic)
              # If min_remove=0, check for subset mode logic (Phase 3)
@@ -168,6 +168,7 @@ class Objaverse(data.Dataset):
                              if len(present_classes) > self.min_remove:
                                  n_remove = np.random.randint(self.min_remove, min(self.max_remove + 1, len(present_classes)))
                                  remove_cols = np.random.choice(present_classes, n_remove, replace=False)
+                                 removed_classes = (remove_cols + 1).tolist()  # 转为1-based记录
                                  mask_remove = surface_labels[:, remove_cols].sum(axis=1) > 0
                                  valid_indices = np.where(~mask_remove)[0]
                          elif surface_labels.ndim == 1:
@@ -176,6 +177,7 @@ class Objaverse(data.Dataset):
                              if len(present_classes) > self.min_remove:
                                  n_remove = np.random.randint(self.min_remove, min(self.max_remove + 1, len(present_classes)))
                                  remove_classes = np.random.choice(present_classes, n_remove, replace=False)
+                                 removed_classes = remove_classes.tolist()
                                  mask_remove = np.isin(surface_labels, remove_classes)
                                  valid_indices = np.where(~mask_remove)[0]
              
@@ -192,18 +194,24 @@ class Objaverse(data.Dataset):
                          if surface_labels.ndim == 2:
                              # Keep points if they belong to ANY of the keep_classes
                              # keep_classes are 1-based. indices are 0-based.
-                             keep_cols = [c-1 for c in keep_classes if c-1 < self.num_classes] # Updated < 10 to < num_classes check
+                             keep_cols = [c-1 for c in keep_classes if c-1 < self.num_classes]
                              if len(keep_cols) > 0:
                                  mask_keep = surface_labels[:, keep_cols].sum(axis=1) > 0
                                  valid_indices = np.where(mask_keep)[0]
+                                 # 记录被移除的类（所有类 - 保留的类）
+                                 all_classes = set(range(1, self.num_classes + 1))
+                                 removed_classes = list(all_classes - set(keep_classes))
                                  
                          elif surface_labels.ndim == 1:
                              mask_keep = np.isin(surface_labels, keep_classes)
                              valid_indices = np.where(mask_keep)[0]
+                             all_classes = set(range(1, self.num_classes + 1))
+                             removed_classes = list(all_classes - set(keep_classes))
 
         if valid_indices is not None and len(valid_indices) < 50:
              # Safety fallback: if we removed almost everything, revert or keep at least something
              valid_indices = None
+             removed_classes = []
              
         if self.surface_sampling:
             if valid_indices is not None:
@@ -372,15 +380,25 @@ class Objaverse(data.Dataset):
         if self.return_sdf is False: # return occupancies (sign) instead
             sdf = (sdf<0).float()
         
-        # Create Class Mask (for Phase 3 Label Conflict Mitigation)
+        # ============================================================================
+        # Phase 2: Create valid_class_mask to track present/missing classes
+        # ============================================================================
         # mask shape: (num_classes,)
+        # 1.0 = class present in input (reconstruction task)
+        # 0.0 = class removed/missing (completion task)
         valid_class_mask = torch.ones(self.num_classes, dtype=torch.float32)
         
         # If we loaded a file with fewer columns than num_classes, mask out the extra columns
         if 'orig_cols' in locals() and orig_cols > 0 and orig_cols < self.num_classes:
             valid_class_mask[orig_cols:] = 0.0
         
-        return points, sdf, surface, self.models[idx][1], npz_path, valid_class_mask#, surface_normals
+        # If classes were removed during partial masking, mark them as missing
+        if len(removed_classes) > 0:
+            for removed_cls in removed_classes:
+                if 1 <= removed_cls <= self.num_classes:
+                    valid_class_mask[removed_cls - 1] = 0.0  # Convert to 0-indexed
+        
+        return points, sdf, surface, self.models[idx][1], npz_path, valid_class_mask
 
     def __len__(self):
         return len(self.models)

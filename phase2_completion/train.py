@@ -151,7 +151,17 @@ def main(args):
             min_remove=args.min_remove,
             max_remove=args.max_remove
         )
-        dataset_val = Objaverse(split='val', sdf_sampling=True, sdf_size=4096, surface_sampling=True, surface_size=args.point_cloud_size, dataset_folder=args.data_path)
+        dataset_val = Objaverse(
+            split='val', 
+            sdf_sampling=True, 
+            sdf_size=4096, 
+            surface_sampling=True, 
+            surface_size=args.point_cloud_size, 
+            dataset_folder=args.data_path,
+            partial_prob=args.partial_prob,  # Phase 2: 验证时也用残缺输入测试补全能力
+            min_remove=args.min_remove,
+            max_remove=args.max_remove
+        )
         print(f"Dataset initialized. Train: {len(dataset_train)}, Val: {len(dataset_val)}")
     except Exception as e:
         print(f"Fatal Error initializing Objaverse dataset: {e}")

@@ -282,15 +282,29 @@ def evaluate(data_loader, model, device):
     # switch to evaluation mode
     model.eval()
     
-    # We need args here, but signature is fixed? 
-    # Usually evaluate calls take args, or we can infer from model output shape?
-    # Model output shape is (B, N, 1 + nb_classes).
-    # We can infer nb_classes = output.shape[-1] - 1.
+    # ============================================================================
+    # Phase 2 Enhanced Metrics: Separate Reconstruction vs Completion
+    # ============================================================================
+    # 方案A: 分离"重建"与"补全"
+    reconstruction_dice_list = []  # 输入类的Dice
+    completion_dice_list = []      # 缺失类的Dice (核心指标!)
+    
+    # 方案B: 按缺失数量分层
+    completion_by_num_missing = {2: [], 3: [], 4: [], 5: []}
+    
+    # 方案C: Per-class 补全分析
+    completion_per_class = {c: [] for c in range(1, 11)}  # 1-10类
+    reconstruction_per_class = {c: [] for c in range(1, 11)}
 
     for batch in metric_logger.log_every(data_loader, 10, header):
         points = batch[0]
         labels = batch[1]
         surface = batch[2]
+        
+        # 关键: 获取valid_class_mask (哪些类存在/缺失)
+        valid_class_mask = None
+        if len(batch) > 5:
+            valid_class_mask = batch[5].to(device, non_blocking=True)  # (B, num_classes)
         
         points = points.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True).squeeze(-1)
@@ -311,7 +325,7 @@ def evaluate(data_loader, model, device):
             target_sdf = labels[:, :, 0]
             target_labels_idx = labels[:, :, 1].long()
             
-            # Calculate classification predictions FIRST
+            # Calculate classification predictions
             pred_probs = torch.cat([torch.zeros_like(pred_logits[:, :, :1]), pred_logits], dim=2)
             pred_cls = torch.argmax(pred_probs, dim=2)
 
@@ -334,9 +348,6 @@ def evaluate(data_loader, model, device):
                 acc_targets = target_labels_idx[:, :1024]
                  
             else: # Standard Mode (3072 or other)
-                 # Default fallback to slicing assumption if 3072
-                 # If not 3072, this might still range error if < 3072. 
-                 # But let's assume if not 1024, it's the full training-like set.
                  loss_vol = criterion(pred_sdf[:, :2048], target_sdf[:, :2048])
                  loss_near = criterion(pred_sdf[:, 2048:3072], target_sdf[:, 2048:3072])
                  loss_surface = (pred_sdf[:, 3072:]).abs().mean() if pred_sdf.shape[1] > 3072 else torch.tensor(0.0, device=device)
@@ -350,14 +361,15 @@ def evaluate(data_loader, model, device):
                  acc_points = pred_cls[:, :3072]
                  acc_targets = target_labels_idx[:, :3072]
             
-            # --- Per-Class IoU Calculation ---
+            # --- Per-Class Analysis with Reconstruction/Completion Separation ---
             eval_limit = 1024 if num_points == 1024 else 3072
-            # Ensure we don't go out of bounds if shape is smaller (e.g. debugging)
             eval_limit = min(eval_limit, pred_sdf.shape[1])
             
             p_full = pred_sdf[:, :eval_limit]
             t_full = target_sdf[:, :eval_limit]
             l_full = target_labels_idx[:, :eval_limit]
+            
+            batch_size = p_full.shape[0]
 
             for c in range(1, nb_classes + 1):
                 class_mask = (l_full == c)
@@ -375,16 +387,38 @@ def evaluate(data_loader, model, device):
                     metric_logger.update(**{f'iou_class_{c}': iou_c.item()})
                     
                     # Dice 
-                    # 2*Inter / (A+B)
                     card_c = pred_bin.sum() + target_bin.sum() + 1e-5
                     dice_c = (2. * inter) / card_c
                     metric_logger.update(**{f'dice_class_{c}': dice_c.item()})
+                    
+                    # ============================================================
+                    # Phase 2: 分离 Reconstruction vs Completion
+                    # ============================================================
+                    if valid_class_mask is not None:
+                        # 检查该类在batch中每个样本的状态
+                        for b in range(batch_size):
+                            if valid_class_mask[b, c-1] > 0.5:
+                                # 该类在输入中存在 → Reconstruction
+                                reconstruction_dice_list.append(dice_c.item())
+                                reconstruction_per_class[c].append(dice_c.item())
+                            else:
+                                # 该类被移除 → Completion (核心指标!)
+                                completion_dice_list.append(dice_c.item())
+                                completion_per_class[c].append(dice_c.item())
+            
+            # ============================================================
+            # 方案B: 按缺失数量分层
+            # ============================================================
+            if valid_class_mask is not None:
+                for b in range(batch_size):
+                    num_missing = (valid_class_mask[b] < 0.5).sum().item()
+                    if num_missing in completion_by_num_missing:
+                        # 计算该样本的overall dice
+                        sample_dice = (vol_dice.item() + near_dice.item()) / 2.0
+                        completion_by_num_missing[num_missing].append(sample_dice)
             # ---------------------------------------
 
             acc = (acc_points == acc_targets).float().mean()
-            # Classification loss logic (optional for eval but good for tracking)
-            # We don't have surface labels here easily matched without re-slicing logic matching train.
-            # Just skip loss_cls for simplicty in eval or set to 0
             loss_cls = torch.tensor(0.0, device=device)
             
             loss = loss_vol + 1.0 * loss_near + 1.0 * loss_surface + loss_cls
@@ -402,6 +436,43 @@ def evaluate(data_loader, model, device):
         # Combined IoU for reporting
         metric_logger.update(iou=(vol_iou.item() + near_iou.item()) / 2.0)
         metric_logger.update(dice=(vol_dice.item() + near_dice.item()) / 2.0)
+
+    # ============================================================================
+    # Phase 2: 计算并记录增强指标
+    # ============================================================================
+    
+    # 方案A: Reconstruction vs Completion
+    if len(reconstruction_dice_list) > 0:
+        avg_reconstruction_dice = sum(reconstruction_dice_list) / len(reconstruction_dice_list)
+        metric_logger.meters['reconstruction_dice'] = misc.SmoothedValue(window_size=1, fmt='{global_avg:.4f}')
+        metric_logger.meters['reconstruction_dice'].update(avg_reconstruction_dice)
+        print(f"\n🔵 Reconstruction Dice (input present): {avg_reconstruction_dice:.4f} (n={len(reconstruction_dice_list)})")
+    
+    if len(completion_dice_list) > 0:
+        avg_completion_dice = sum(completion_dice_list) / len(completion_dice_list)
+        metric_logger.meters['completion_dice'] = misc.SmoothedValue(window_size=1, fmt='{global_avg:.4f}')
+        metric_logger.meters['completion_dice'].update(avg_completion_dice)
+        print(f"🟢 Completion Dice (input missing):    {avg_completion_dice:.4f} (n={len(completion_dice_list)}) ⭐ CORE METRIC")
+    
+    # 方案B: 按缺失数量分层
+    print("\n📊 Completion Performance by Number of Missing Classes:")
+    for num_missing in sorted(completion_by_num_missing.keys()):
+        if len(completion_by_num_missing[num_missing]) > 0:
+            avg_dice = sum(completion_by_num_missing[num_missing]) / len(completion_by_num_missing[num_missing])
+            metric_logger.meters[f'completion_missing_{num_missing}'] = misc.SmoothedValue(window_size=1, fmt='{global_avg:.4f}')
+            metric_logger.meters[f'completion_missing_{num_missing}'].update(avg_dice)
+            print(f"  Missing {num_missing} classes: Dice={avg_dice:.4f} (n={len(completion_by_num_missing[num_missing])})")
+    
+    # 方案C: Per-class 补全分析
+    print("\n📋 Per-Class Completion Performance:")
+    class_names = ['Myo', 'LA', 'LV', 'RA', 'RV', 'Ao', 'PA', 'LAA', 'Cor', 'PV']
+    for c in range(1, min(11, nb_classes+1)):
+        if len(completion_per_class[c]) > 0:
+            avg_compl = sum(completion_per_class[c]) / len(completion_per_class[c])
+            name = class_names[c-1] if c <= len(class_names) else f'Class{c}'
+            print(f"  {name:8s} completion: {avg_compl:.4f} (when missing, n={len(completion_per_class[c])})")
+            metric_logger.meters[f'completion_class_{c}'] = misc.SmoothedValue(window_size=1, fmt='{global_avg:.4f}')
+            metric_logger.meters[f'completion_class_{c}'].update(avg_compl)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
