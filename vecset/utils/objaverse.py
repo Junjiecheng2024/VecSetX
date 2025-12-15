@@ -97,7 +97,16 @@ class Objaverse(data.Dataset):
         with open(csv_path, newline='') as csvfile:
             reader = csv.reader(csvfile, delimiter=',')
 
-            model_filenames = [(os.path.join(self.npz_folder, row[0], row[1]+'.npz'), row[2]) for row in reader]
+            model_filenames = []
+            for row in reader:
+                # CSV format: category,filename,label
+                # If category (row[0]) is empty, path is: npz_folder/filename.npz
+                # If category exists, path is: npz_folder/category/filename.npz
+                if row[0].strip():  # Has category
+                    npz_path = os.path.join(self.npz_folder, row[0], row[1]+'.npz')
+                else:  # No category, direct filename
+                    npz_path = os.path.join(self.npz_folder, row[1]+'.npz')
+                model_filenames.append((npz_path, row[2]))
 
         self.models = model_filenames
         
