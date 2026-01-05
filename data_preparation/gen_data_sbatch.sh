@@ -93,27 +93,26 @@ apptainer exec \
   --env TMPDIR=$TMPDIR \
   --env XDG_CACHE_HOME=$XDG_CACHE_HOME \
   --env MPLCONFIGDIR=$MPLCONFIGDIR \
-  --env HOME=$HOME \
   --env OMP_NUM_THREADS=$OMP_NUM_THREADS \
   "$IMG" \
   bash -lc "
     set -e
-    export PYTHONPATH=\"\$PYTHONPATH:$PROJECTDIR\"
-    export PATH=\"\$PYTHONUSERBASE/bin:\$PATH\"
+    export PYTHONPATH=\$PYTHONPATH:$PROJECTDIR
+    export PATH=$PYTHONUSERBASE/bin:\$PATH
     
     echo 'Python: '\$(which python)
     echo 'Checking dependencies...'
-    python -c 'import numpy, nibabel, trimesh, scipy; print(\"✅ All deps OK\")'
+    python -c 'import numpy, nibabel, trimesh, scipy; print(\"All deps OK\")'
     
-    python -u $PROJECTDIR/data_preparation/prepare_data_v2.py \\
-      --input_dir $INPUT_DIR \\
-      --output_dir $OUTPUT_DIR \\
-      --num_surface_points $NUM_SURFACE \\
-      --num_near_points $NUM_NEAR \\
-      --num_vol_points $NUM_VOL \\
-      --classes $CLASSES \\
-      --file_workers $FILE_WORKERS \\
-      --pattern \"$PATTERN\"
+    python -u $PROJECTDIR/data_preparation/prepare_data_v2.py \
+      --input_dir $INPUT_DIR \
+      --output_dir $OUTPUT_DIR \
+      --num_surface_points $NUM_SURFACE \
+      --num_near_points $NUM_NEAR \
+      --num_vol_points $NUM_VOL \
+      --classes $CLASSES \
+      --file_workers $FILE_WORKERS \
+      --pattern '*_mask.nii.gz'
   "
 
 echo ""
