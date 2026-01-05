@@ -21,7 +21,7 @@ extensions
 *.err
 *.out
 *.json
-*.txt
+# *.txt
 !总纲.txt
 *.png
 *.jpg

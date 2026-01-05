@@ -29,8 +29,8 @@ mkdir -p logs
 # --n_workers 0: Inner parallelization disabled when file_workers > 1
 echo "Starting data generation job on $(hostname)"
 python prepare_data.py \
-    --input_dir /scratch/project_2016517/junjie/dataset/original/segmentations \
-    --output_dir /scratch/project_2016517/junjie/dataset/original_npz \
+    --input_dir /scratch/project_2016517/junjie/dataset/repaired_shape \
+    --output_dir /scratch/project_2016517/junjie/dataset/repaired_npz \
     --file_workers 20 \
     --n_workers 0
 

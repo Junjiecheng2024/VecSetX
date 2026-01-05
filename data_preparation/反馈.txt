@@ -1,0 +1,109 @@
+整体方向**是对的**：你这个 `prepare_data_v2.py` 已经实现了导师说的核心思想——**按类别分组存点（每类一个 binary implicit 任务），不再用 one-hot**，并且训练时可以做到“for-loop over classes，shared transformer / shared model，loss 各算各的”。
+
+不过我建议你在正式跑大规模数据前，**务必改/核对下面这些关键点**（都是会影响训练稳定性或导致“隐形 bug”的地方）：
+
+---
+
+## 1) `data == c` 这里建议改成整数标签再比较
+
+你现在是：
+
+```python
+data = img.get_fdata(dtype=np.float32)
+mask = (data == c)
+```
+
+浮点比较可能出意外（虽然很多 label nii 里是整数，但读成 float 后仍有风险）。建议：
+
+* `data = img.get_fdata().astype(np.int16)` 或直接 `np.asarray(img.dataobj).astype(np.int16)`
+* 然后 `mask = (data == c)`
+
+这条很重要，属于“低成本高收益”的稳定性修正。
+
+---
+
+## 2) 你现在的 near-surface “50% inside / 50% outside”并不一定真的成立
+
+你是用法向 + 高斯扰动去推点，然后再用 SDF 检查“应该 inside 的那一半有没有跑到外面”，跑到外面就减小 eps 迭代修正。
+
+这做法**可用**，但有两个常见坑：
+
+* marching cubes 得到的 mesh 法向方向不保证对每个 case 都一致（可能出现部分面翻转），会导致“推外/推内”方向失效；
+* 你只修正了 “inside 结果跑到 outside” 的那一半，但 “outside 跑到 inside” 没修正（虽然影响小，但会让比例漂）。
+
+更稳的做法（推荐你后续升级）是：
+**near 点先随机扰动生成，然后用 SDF 符号来筛选/重采样，确保比例严格 50/50**（不依赖法向一致性）。
+
+---
+
+## 3) Uniform 体积点你现在是在 normalized cube `[-1,1]` 里采样，可能会落到体数据边界外
+
+你后面用 trilinear 插值时把 index clip 到 `0..D-2`，这会导致：
+
+* 落到边界外的点会被“挤”到边缘取值
+* 体积点分布会偏向边界（尤其当你的 `scale_factor` 由 max_dist 定义时，`[-1,1]` 对应的是**包围球**，不是严格的 volume 边界）
+
+建议更稳一点的版本：
+
+* uniform 点直接在 voxel 坐标里采样：`z~U(0,D), y~U(0,H), x~U(0,W)`
+* 然后再 normalize 成 `[-1,1]` 存储
+
+这样你的采样分布会更“物理一致”。
+
+---
+
+## 4) SDF 的“尺度一致性”你这里是对的，但你要在训练端保持一致
+
+你这里的逻辑是：
+
+* EDT 计算得到的 SDF 是 voxel 距离
+* 你把点坐标归一化到 `[-1,1]`
+* 所以你把插值出来的 SDF 再乘了 `scale_factor`，把 SDF 也变成 normalized 空间单位
+
+✅ 这一点是正确的。
+
+⚠️ 但你训练时要确保：
+
+* 网络预测的 SDF 也是 normalized 单位
+* loss（尤其 eikonal）里用的是同一个尺度假设
+
+否则会出现“loss 看起来正常，但距离单位不一致，推理体积有偏”的问题。
+
+---
+
+## 5) 建议补存两个小文件，能省很多后期排查时间
+
+你已经存了 `metadata.json`（很好）。
+我建议你每个 class 目录再额外存：
+
+1. `surface_sdf.npy`（或者不用存，直接存个 `surface_target = 0` 也行）
+
+   * 训练时很多实现会对 surface 点加 “sdf≈0” 约束
+2. `stats.json`（你现在只是 print 了 pos_ratio）
+
+   * 把 `pos_ratio_near/vol`, `min/max sdf`, `presence` 写下来
+   * 后面你做“按类别对比表格”会非常方便
+
+---
+
+## 6) “classes=10” 这件事：别忘了 Coronary 的策略
+
+你脚本默认 `--classes 10`，且 `CLASS_NAMES` 里包含 Coronary。
+但你们会议结论是：**冠状动脉很可能不要修复/不要动**（至少在 NeAR 那边）。
+
+这里两种合理做法（二选一）：
+
+* 如果你这一步是 “VecSetX/implicit 重建 baseline” 研究：**可以保留 coronary**，但要单独记录它的 presence/体积变化；
+* 如果你这一步最终要产出“可信标签用于训练分割”：**可以先 skip coronary**（或用原始标签单独走一套）。
+
+---
+
+# 总结：可以用，但建议你先做一次“小规模自检”
+
+你这版脚本的框架**完全符合导师说的多类方式**，可以继续用。
+我建议你先挑 2–3 个 case 跑完后，做三件 quick check：
+
+1. 每个 class 的 `near_sdf`：是否真的是一半正一半负（允许小偏差）
+2. `vol_sdf`：inside 点是不是大多为负、uniform 点正负都有
+3. 可视化抽查：把 `surface_pts/near_pts/vol_pts` 反归一化回 voxel，看是否落在正确区域
+
