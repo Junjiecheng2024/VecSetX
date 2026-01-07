@@ -4,8 +4,8 @@
 #SBATCH --time=36:00:00
 #SBATCH --partition=gpumedium
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=4
-#SBATCH --cpus-per-task=10
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=40
 #SBATCH --gres=gpu:a100:4
 #SBATCH -o /scratch/project_2016517/JunjieCheng/VecSetX/logs/phase0_%j.out
 #SBATCH -e /scratch/project_2016517/JunjieCheng/VecSetX/logs/phase0_%j.err

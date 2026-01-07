@@ -111,7 +111,7 @@ srun apptainer exec --nv \
     --num_nodes 1 \
     --strategy ddp \
     --encoder efficientnet-b7 \
-    --epochs 40 \
+    --epochs 80 \
     --max_samples 20000 \
     --batch_size 3 \
     --accum_iter 48 \
