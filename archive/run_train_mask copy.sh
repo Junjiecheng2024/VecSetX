@@ -67,7 +67,7 @@ mkdir -p logs
 mkdir -p "$OUTDIR"
 
 # 🔥 Stage 2: 加载 Pretrain 权重
-CKPT="/scratch/project_2016526/JunjieCheng/outputs/mask_model_phase3/20260104_170937/checkpoints/mask-best-epoch=39-val/dice=0.6113.ckpt"
+CKPT="/scratch/project_2016526/JunjieCheng/outputs/mask_model_phase3/20260107_085126/checkpoints/mask-best-epoch=64-val/dice=0.6801.ckpt"
 
 echo "📊 Configuration:"
 echo "  Image: $IMG"
@@ -103,6 +103,7 @@ srun apptainer exec --nv \
   --env MPLCONFIGDIR=$MPLCONFIGDIR \
   --env OMP_NUM_THREADS=$OMP_NUM_THREADS \
   --env TMPDIR=$TMPDIR \
+  --env MASTER_PORT=$CONF_MASTER_PORT \
   "$IMG" \
   python -u ECG/training/train_mask_model.py \
     --data_dir $DATA_DIR \
@@ -111,13 +112,13 @@ srun apptainer exec --nv \
     --num_nodes 1 \
     --strategy ddp \
     --encoder efficientnet-b7 \
-    --epochs 80 \
-    --max_samples 20000 \
-    --batch_size 3 \
+    --epochs 120 \
+    --max_samples 40000 \
+    --batch_size 2 \
     --accum_iter 48 \
     --lr 1e-5 \
-    --image_height 1024 \
-    --image_width 1408 \
+    --image_height 1000 \
+    --image_width 1375 \
     --num_workers 8 \
     --precision 16-mixed \
     --wandb_project ecg-mask-model \

@@ -76,7 +76,7 @@ case_xxx/
  │    ├── surface_pts.npy        (N1s, 3)
  │    ├── near_surface_pts.npy   (N1n, 3)
  │    ├── volume_pts.npy         (N1v, 3)
- │    └── target.npy             (N1, 1)   # sdf 或 occ
+ │    └── target.npy             (N1, 1)   # sdf
  │
  ├── class_2/
  │    ├── surface_pts.npy
