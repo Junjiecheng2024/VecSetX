@@ -24,7 +24,7 @@ from vecset.utils import misc
 from vecset.utils.cardiac_dataset import CardiacPerClass
 from vecset.utils.misc import NativeScalerWithGradNormCount as NativeScaler
 from vecset.models import autoencoder
-from vecset.engines.engine_ae import train_one_epoch
+from vecset.engines.engine_ae import train_one_epoch, evaluate
 
 
 def get_args_parser():
@@ -46,8 +46,8 @@ def get_args_parser():
                         help='Number of SDF query points')
 
     # Optimizer parameters
-    parser.add_argument('--clip_grad', type=float, default=1.0,
-                        help='Gradient clipping norm')
+    parser.add_argument('--clip_grad', type=float, default=None,
+                        help='Gradient clipping norm (default: None, no clipping)')
     parser.add_argument('--weight_decay', type=float, default=0.05,
                         help='Weight decay')
     parser.add_argument('--lr', type=float, default=None,
@@ -90,6 +90,8 @@ def get_args_parser():
     parser.add_argument('--world_size', default=1, type=int)
     parser.add_argument('--local_rank', default=-1, type=int)
     parser.add_argument('--dist_url', default='env://')
+    parser.add_argument('--dist_on_itp', action='store_true',
+                        help='Enable distributed training on ITP cluster')
 
     # WandB parameters
     parser.add_argument('--wandb_project', default='vecset-phase0', type=str)
@@ -245,6 +247,7 @@ def main(args):
     # Training loop
     print(f"\nStart training for {args.epochs} epochs")
     start_time = time.time()
+    best_iou = 0.0  # Track best validation IoU
     
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
@@ -259,19 +262,52 @@ def main(args):
             args=args
         )
 
-        # Save checkpoint
-        if args.output_dir and (epoch % args.save_freq == 0 or epoch + 1 == args.epochs):
-            misc.save_model(
-                args=args, model=model, model_without_ddp=model_without_ddp,
-                optimizer=optimizer, loss_scaler=loss_scaler, epoch=epoch
-            )
-
-        # Log stats
-        log_stats = {
-            **{f'train_{k}': v for k, v in train_stats.items()},
-            'epoch': epoch,
-            'n_parameters': n_parameters
-        }
+        # Validation every 10 epochs
+        if epoch % 10 == 0 or epoch + 1 == args.epochs:
+            val_stats = evaluate(model, criterion, data_loader_val, device, args)
+            current_iou = (val_stats.get('vol_iou', 0.0) + val_stats.get('near_iou', 0.0)) / 2
+            print(f"Validation IoU: {val_stats.get('vol_iou', 0.0):.4f} (vol), {val_stats.get('near_iou', 0.0):.4f} (near), avg: {current_iou:.4f}")
+            
+            # Save checkpoint if this is the best model so far
+            if current_iou > best_iou:
+                print(f"New best IoU: {current_iou:.4f} (previous: {best_iou:.4f})")
+                best_iou = current_iou
+                
+                if args.output_dir:
+                    # Delete old best checkpoint
+                    old_best = os.path.join(args.output_dir, 'checkpoint-best.pth')
+                    if os.path.exists(old_best):
+                        os.remove(old_best)
+                        print(f"Removed old checkpoint: {old_best}")
+                    
+                    # Save new best checkpoint
+                    misc.save_model(
+                        args=args, model=model, model_without_ddp=model_without_ddp,
+                        optimizer=optimizer, loss_scaler=loss_scaler, epoch=epoch, tag='best'
+                    )
+                    print(f"Saved best checkpoint with IoU: {current_iou:.4f}")
+            
+            # Log validation stats
+            log_stats = {
+                **{f'train_{k}': v for k, v in train_stats.items()},
+                **{f'val_{k}': v for k, v in val_stats.items()},
+                'epoch': epoch,
+                'n_parameters': n_parameters,
+                'best_iou': best_iou
+            }
+            
+            # Log to tensorboard
+            if log_writer is not None:
+                for k, v in val_stats.items():
+                    log_writer.add_scalar(f'val/{k}', v, epoch)
+                log_writer.add_scalar('val/best_iou', best_iou, epoch)
+        else:
+            # Log only training stats
+            log_stats = {
+                **{f'train_{k}': v for k, v in train_stats.items()},
+                'epoch': epoch,
+                'n_parameters': n_parameters
+            }
 
         if args.output_dir and misc.is_main_process():
             if log_writer is not None:

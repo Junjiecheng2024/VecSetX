@@ -74,8 +74,8 @@ def get_args():
                         help="Near-surface points per class")
     parser.add_argument("--num_vol_points", type=int, default=8192,
                         help="Volume points per class")
-    parser.add_argument("--classes", type=int, default=10,
-                        help="Number of classes to process")
+    parser.add_argument("--classes", type=str, default="1,2,3,4,5,6,7,8,9,10",
+                        help="Comma-separated list of class IDs to process (e.g., '2' or '2,3,4')")
     parser.add_argument("--near_std", type=float, default=0.01,
                         help="Std of Gaussian noise for near-surface points")
     parser.add_argument("--start_idx", type=int, default=0)
@@ -332,7 +332,10 @@ def process_file(file_path, args):
         # Compute global normalization parameters from ALL class surfaces combined
         all_surface_points = []
         
-        for c in range(1, args.classes + 1):
+        # Parse class IDs from comma-separated string
+        class_ids = [int(c.strip()) for c in args.classes.split(',')]
+        
+        for c in class_ids:
             mask = (data == c)  # Now safe: int == int comparison
             if np.sum(mask) == 0:
                 continue
@@ -363,7 +366,10 @@ def process_file(file_path, args):
         processed_classes = []
         all_class_stats = {}
         
-        for c in range(1, args.classes + 1):
+        # Parse class IDs from comma-separated string
+        class_ids = [int(c.strip()) for c in args.classes.split(',')]
+        
+        for c in class_ids:
             mask = (data == c)  # Safe int comparison
             if np.sum(mask) == 0:
                 continue

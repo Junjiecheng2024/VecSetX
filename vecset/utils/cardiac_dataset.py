@@ -173,14 +173,9 @@ class CardiacPerClass(data.Dataset):
         # Convert to tensors
         surface = torch.from_numpy(surface).float()
         
-        if self.split == 'train':
-            # Combine vol and near points for training
-            points = np.concatenate([sampled_vol_pts, sampled_near_pts], axis=0)
-            sdf = np.concatenate([sampled_vol_sdf, sampled_near_sdf], axis=0)
-        else:
-            # Validation: use only near points (like original VecSetX)
-            points = sampled_near_pts
-            sdf = sampled_near_sdf
+        # Always combine vol and near points (same format for train and val)
+        points = np.concatenate([sampled_vol_pts, sampled_near_pts], axis=0)
+        sdf = np.concatenate([sampled_vol_sdf, sampled_near_sdf], axis=0)
         
         points = torch.from_numpy(points).float()
         sdf = torch.from_numpy(sdf).float()

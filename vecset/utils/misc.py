@@ -56,15 +56,15 @@ class SmoothedValue(object):
 
     @property
     def global_avg(self):
-        return self.total / self.count
+        return self.total / self.count if self.count > 0 else 0.0
 
     @property
     def max(self):
-        return max(self.deque)
+        return max(self.deque) if len(self.deque) > 0 else 0.0
 
     @property
     def value(self):
-        return self.deque[-1]
+        return self.deque[-1] if len(self.deque) > 0 else 0.0
 
     def __str__(self):
         return self.fmt.format(
@@ -126,11 +126,9 @@ class MetricLogger(object):
             '[{0' + space_fmt + '}/{1}]',
             'eta: {eta}',
             '{meters}',
-            'time: {time}',
-            'data: {data}'
+            'time: {time}'
         ]
-        if torch.cuda.is_available():
-            log_msg.append('max mem: {memory:.0f}')
+        # Removed max mem display
         log_msg = self.delimiter.join(log_msg)
         MB = 1024.0 * 1024.0
         for obj in iterable:
@@ -140,17 +138,10 @@ class MetricLogger(object):
             if i % print_freq == 0 or i == len(iterable) - 1:
                 eta_seconds = iter_time.global_avg * (len(iterable) - i)
                 eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
-                if torch.cuda.is_available():
-                    print(log_msg.format(
-                        i, len(iterable), eta=eta_string,
-                        meters=str(self),
-                        time=str(iter_time), data=str(data_time),
-                        memory=torch.cuda.max_memory_allocated() / MB))
-                else:
-                    print(log_msg.format(
-                        i, len(iterable), eta=eta_string,
-                        meters=str(self),
-                        time=str(iter_time), data=str(data_time)))
+                print(log_msg.format(
+                    i, len(iterable), eta=eta_string,
+                    meters=str(self),
+                    time=str(iter_time)))
             i += 1
             end = time.time()
         total_time = time.time() - start_time

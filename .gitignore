@@ -8,7 +8,7 @@ __pycache__
 build
 dist
 *.egg-info
-output/
+outputs/
 vecset/README
 eval.py
 extensions
@@ -21,7 +21,9 @@ extensions
 *.err
 *.out
 *.json
-# *.txt
+*.txt
 !总纲.txt
 *.png
 *.jpg
+dataset/
+wandb/
