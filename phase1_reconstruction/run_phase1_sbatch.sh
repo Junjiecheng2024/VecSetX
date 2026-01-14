@@ -59,9 +59,9 @@ mkdir -p "/scratch/project_2016517/JunjieCheng/VecSetX/logs"
 cd "$PROJECTDIR"
 
 # Training configuration
-BATCH_SIZE=2
+BATCH_SIZE=1
 EPOCHS=800
-ACCUM_ITER=8
+ACCUM_ITER=16
 LR=5e-4
 WARMUP=10
 SAVE_FREQ=10
