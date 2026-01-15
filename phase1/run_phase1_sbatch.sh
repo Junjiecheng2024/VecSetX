@@ -111,7 +111,7 @@ srun apptainer exec --nv \
     --nproc_per_node=4 \
     --master_addr=$MASTER_ADDR \
     --master_port=$MASTER_PORT \
-    $PROJECTDIR/phase1_reconstruction/train.py \
+    $PROJECTDIR/phase1/train.py \
       --data_path $DATA_DIR \
       --output_dir $OUTDIR \
       --log_dir $OUTDIR/logs \

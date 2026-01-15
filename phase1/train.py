@@ -1,5 +1,5 @@
 # Copyright (c) 2025, Biao Zhang.
-# Modified for Phase 1: Multi-class (10 classes) cardiac reconstruction training
+# Modified for Phase 1: Multi-class (10 classes) training
 
 import argparse
 import datetime
@@ -13,13 +13,10 @@ import torch
 import torch.backends.cudnn as cudnn
 from torch.utils.tensorboard import SummaryWriter
 
-torch.set_num_threads(8)
-
-# Add parent directory to path for imports
 import sys
+# Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from vecset.utils import lr_decay as lrd
 from vecset.utils import misc
 from vecset.utils.cardiac_dataset import CardiacPerClass
 from vecset.utils.misc import NativeScalerWithGradNormCount as NativeScaler
@@ -28,12 +25,12 @@ from vecset.engines.engine_ae import train_one_epoch, evaluate
 
 
 def get_args_parser():
-    parser = argparse.ArgumentParser('VecSet Phase 1 - Multi-Class Cardiac Reconstruction', add_help=False)
+    parser = argparse.ArgumentParser('VecSet Phase 1 - Multi-class Reconstruction', add_help=False)
     
     # Training parameters
     parser.add_argument('--batch_size', default=16, type=int,
                         help='Batch size per GPU')
-    parser.add_argument('--epochs', default=800, type=int)
+    parser.add_argument('--epochs', default=500, type=int)
     parser.add_argument('--accum_iter', default=1, type=int,
                         help='Gradient accumulation iterations')
 
@@ -52,7 +49,7 @@ def get_args_parser():
                         help='Weight decay')
     parser.add_argument('--lr', type=float, default=None,
                         help='Learning rate (absolute)')
-    parser.add_argument('--blr', type=float, default=5e-4,
+    parser.add_argument('--blr', type=float, default=5e-5,
                         help='Base learning rate')
     parser.add_argument('--min_lr', type=float, default=1e-6,
                         help='Minimum learning rate')
@@ -61,9 +58,9 @@ def get_args_parser():
 
     # Dataset parameters
     parser.add_argument('--data_path', type=str, required=True,
-                        help='Path to dataset directory (vecset_phase1)')
-    parser.add_argument('--classes', type=int, nargs='+', 
-                        default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                        help='Path to dataset directory')
+    # Phase 1: All 10 classes
+    parser.add_argument('--classes', type=int, nargs='+', default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
                         help='Class IDs to train on (default: all 10 classes)')
     parser.add_argument('--val_ratio', type=float, default=0.1,
                         help='Validation set ratio')
@@ -106,7 +103,7 @@ def main(args):
     misc.init_distributed_mode(args)
 
     print('=' * 60)
-    print('VecSet Phase 1: Multi-Class Cardiac Reconstruction')
+    print('VecSet Phase 1: Multi-class Reconstruction (10 Classes)')
     print('=' * 60)
     print(f"Job dir: {os.path.dirname(os.path.realpath(__file__))}")
     print(f"Args:\n{args}".replace(', ', ',\n'))
@@ -194,8 +191,6 @@ def main(args):
     )
 
     # Create model
-    # Note: input_dim=3 (no one-hot), output_dim=1 (single SDF per class)
-    # Each class is treated as an independent binary SDF task
     model = autoencoder.__dict__[args.model](
         pc_size=args.point_cloud_size,
         input_dim=3,
@@ -264,32 +259,41 @@ def main(args):
             args=args
         )
 
-        # Validation every 10 epochs
+        # Validation every 10 epochs or last epoch
         if epoch % 10 == 0 or epoch + 1 == args.epochs:
             val_stats = evaluate(model, criterion, data_loader_val, device, args)
             current_iou = (val_stats.get('vol_iou', 0.0) + val_stats.get('near_iou', 0.0)) / 2
-            print(f"Validation IoU: {val_stats.get('vol_iou', 0.0):.4f} (vol), {val_stats.get('near_iou', 0.0):.4f} (near), avg: {current_iou:.4f}")
             
-            # Save checkpoint if this is the best model so far
-            if current_iou > best_iou:
-                print(f"New best IoU: {current_iou:.4f} (previous: {best_iou:.4f})")
-                best_iou = current_iou
-                
-                if args.output_dir:
-                    # Delete old best checkpoint
-                    old_best = os.path.join(args.output_dir, 'checkpoint-best.pth')
-                    if os.path.exists(old_best):
-                        os.remove(old_best)
-                        print(f"Removed old checkpoint: {old_best}")
+            # Print validation stats (rank 0 only usually, but misc.all_reduce might handle sync)
+            # Evaluate usually returns stats only on rank 0 or syncs them? 
+            # In misc.evaluate it usually syncs. 
+            # We strictly print on rank 0 just in case.
+            if misc.is_main_process():
+                print(f"Validation IoU: {val_stats.get('vol_iou', 0.0):.4f} (vol), {val_stats.get('near_iou', 0.0):.4f} (near), avg: {current_iou:.4f}")
+            
+                # Save checkpoint if this is the best model so far
+                if current_iou > best_iou:
+                    print(f"New best IoU: {current_iou:.4f} (previous: {best_iou:.4f})")
+                    best_iou = current_iou
                     
-                    # Save new best checkpoint
-                    misc.save_model(
-                        args=args, model=model, model_without_ddp=model_without_ddp,
-                        optimizer=optimizer, loss_scaler=loss_scaler, epoch=epoch, tag='best'
-                    )
-                    print(f"Saved best checkpoint with IoU: {current_iou:.4f}")
+                    if args.output_dir:
+                        # Delete old best checkpoint
+                        old_best = os.path.join(args.output_dir, 'checkpoint-best.pth')
+                        if os.path.exists(old_best):
+                            os.remove(old_best)
+                            print(f"Removed old checkpoint: {old_best}")
+                        
+                        # Save new best checkpoint
+                        misc.save_model(
+                            args=args, model=model, model_without_ddp=model_without_ddp,
+                            optimizer=optimizer, loss_scaler=loss_scaler, epoch=epoch, tag='best'
+                        )
+                        print(f"Saved best checkpoint with IoU: {current_iou:.4f}")
             
-            # Log validation stats
+            # Broadcast best_iou to other ranks to keep them in sync if needed (though not strictly necessary if training proceeds)
+            # But let's just make sure log_stats is consistent
+            
+            # Log validation stats (Rank 0 only handles logging)
             log_stats = {
                 **{f'train_{k}': v for k, v in train_stats.items()},
                 **{f'val_{k}': v for k, v in val_stats.items()},
